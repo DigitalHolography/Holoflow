@@ -1,0 +1,272 @@
+{
+  "edges": [
+    {
+      "from": "source_0",
+      "in": 0,
+      "out": 0,
+      "to": "memcpy_1"
+    },
+    {
+      "from": "memcpy_1",
+      "in": 0,
+      "out": 0,
+      "to": "batch_queue_2"
+    },
+    {
+      "from": "batch_queue_2",
+      "in": 0,
+      "out": 0,
+      "to": "conversion_3"
+    },
+    {
+      "from": "conversion_3",
+      "in": 0,
+      "out": 0,
+      "to": "reshape_4"
+    },
+    {
+      "from": "reshape_4",
+      "in": 0,
+      "out": 0,
+      "to": "batch_queue_5"
+    },
+    {
+      "from": "batch_queue_5",
+      "in": 0,
+      "out": 0,
+      "to": "pca_6"
+    },
+    {
+      "from": "pca_6",
+      "in": 0,
+      "out": 0,
+      "to": "filter_2d_7"
+    },
+    {
+      "from": "filter_2d_7",
+      "in": 0,
+      "out": 0,
+      "to": "dual_reader_batch_queue_8"
+    },
+    {
+      "from": "dual_reader_batch_queue_8",
+      "in": 0,
+      "out": 0,
+      "to": "fresnel_diffraction_9"
+    },
+    {
+      "from": "fresnel_diffraction_9",
+      "in": 0,
+      "out": 0,
+      "to": "mean_10"
+    },
+    {
+      "from": "mean_10",
+      "in": 0,
+      "out": 0,
+      "to": "fftshift_11"
+    },
+    {
+      "from": "fftshift_11",
+      "in": 0,
+      "out": 0,
+      "to": "flatfield_12"
+    },
+    {
+      "from": "flatfield_12",
+      "in": 0,
+      "out": 0,
+      "to": "mean_13"
+    },
+    {
+      "from": "mean_13",
+      "in": 0,
+      "out": 0,
+      "to": "slide_avg_14"
+    },
+    {
+      "from": "slide_avg_14",
+      "in": 0,
+      "out": 0,
+      "to": "pct_clip_15"
+    },
+    {
+      "from": "pct_clip_15",
+      "in": 0,
+      "out": 0,
+      "to": "conversion_16"
+    },
+    {
+      "from": "conversion_16",
+      "in": 0,
+      "out": 0,
+      "to": "batch_queue_17"
+    },
+    {
+      "from": "batch_queue_17",
+      "in": 0,
+      "out": 0,
+      "to": "xy_processed_display_18"
+    }
+  ],
+  "nodes": {
+    "batch_queue_17": {
+      "params": {
+        "output_size": 1,
+        "output_stride": 1,
+        "target_capacity": 32
+      },
+      "type": "BatchQueue"
+    },
+    "batch_queue_2": {
+      "params": {
+        "output_size": 32,
+        "output_stride": 32,
+        "target_capacity": 1024
+      },
+      "type": "BatchQueue"
+    },
+    "batch_queue_5": {
+      "params": {
+        "output_size": 8,
+        "output_stride": 8,
+        "target_capacity": 16
+      },
+      "type": "BatchQueue"
+    },
+    "conversion_16": {
+      "params": {
+        "strategy": "Scaled",
+        "target": "U8"
+      },
+      "type": "Conversion"
+    },
+    "conversion_3": {
+      "params": {
+        "strategy": "Real",
+        "target": "F32"
+      },
+      "type": "Conversion"
+    },
+    "dual_reader_batch_queue_8": {
+      "params": {
+        "target_capacity": 16,
+        "window_size": 64
+      },
+      "type": "DualReaderBatchQueue"
+    },
+    "fftshift_11": {
+      "params": {
+        "axes": [
+          -2,
+          -1
+        ]
+      },
+      "type": "FFTShiftNp"
+    },
+    "filter_2d_7": {
+      "params": {
+        "r_inner": 3,
+        "r_outer": 1024,
+        "s_inner": 0,
+        "s_outer": 1
+      },
+      "type": "Filter2D"
+    },
+    "flatfield_12": {
+      "params": {
+        "sigma_x": 45.45762634277344,
+        "sigma_y": 28.41101837158203
+      },
+      "type": "Flatfield"
+    },
+    "fresnel_diffraction_9": {
+      "params": {
+        "axes": [
+          -2,
+          -1
+        ],
+        "dx": 0.000019999999494757503,
+        "dy": 0.000019999999494757503,
+        "lambda": 8.509999815942138e-7,
+        "output_magnitude": true,
+        "skip_phase_shift": true,
+        "z": 0.49500003457069397
+      },
+      "type": "FresnelDiffraction"
+    },
+    "mean_10": {
+      "params": {
+        "axis": -3,
+        "keepdims": true
+      },
+      "type": "Mean"
+    },
+    "mean_13": {
+      "params": {
+        "axis": 0,
+        "keepdims": false
+      },
+      "type": "Mean"
+    },
+    "memcpy_1": {
+      "params": {
+        "target": "Device"
+      },
+      "type": "Memcpy"
+    },
+    "pca_6": {
+      "params": {
+        "begin": 0,
+        "end": 16
+      },
+      "type": "Pca"
+    },
+    "pct_clip_15": {
+      "params": {
+        "max_pct": 99.9800033569336,
+        "min_pct": 0.019999999552965164,
+        "roi": {
+          "angle": 0,
+          "cx": 0.5,
+          "cy": 0.5,
+          "rx": 0.8999999761581421,
+          "ry": 0.8999999761581421
+        }
+      },
+      "type": "PctClip"
+    },
+    "reshape_4": {
+      "params": {
+        "copy": false,
+        "shape": [
+          1,
+          32,
+          320,
+          512
+        ]
+      },
+      "type": "Reshape"
+    },
+    "slide_avg_14": {
+      "params": {
+        "discard_first": 0,
+        "target_capacity": 8,
+        "window_size": 64
+      },
+      "type": "SlidingAverage"
+    },
+    "source_0": {
+      "type": "ReferenceSource",
+      "params": {
+        "batch_size": 32,
+        "height": 320,
+        "width": 512
+      }
+    },
+    "xy_processed_display_18": {
+      "type": "ReferenceSink",
+      "params": {}
+    }
+  }
+}

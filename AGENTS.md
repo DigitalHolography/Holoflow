@@ -86,4 +86,4 @@ Guidance:
 
 ## Profiling
 
-To use nsys refer to 'C:\Program Files\NVIDIA Corporation\Nsight Systems 2026.4.1\skills\nsight-systems\SKILL.md'
+To use nsys refer to 'C:\Program Files\NVIDIA Corporation\Nsight Systems 2026.5.1\skills\nsight-systems\SKILL.md'

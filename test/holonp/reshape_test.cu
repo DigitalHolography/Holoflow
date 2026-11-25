@@ -18,7 +18,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <filesystem>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -29,7 +28,7 @@
 #include "holoflow/core/tensor.hh"
 #include "holonp/reshape.hh"
 
-#include "python_oracle.hh"
+#include "reference_ops.hh"
 #include "sync_task_runner.hh"
 #include "tensor_test_buffer.hh"
 
@@ -38,7 +37,6 @@ using holoflow::core::MemLoc;
 using holoflow::core::TaskKind;
 using holoflow::core::TDesc;
 
-static const std::filesystem::path kOracleScript{HOLONP_TEST_ORACLE_SCRIPT};
 
 static TDesc device_desc(std::vector<size_t> shape, DType dtype) {
   return TDesc(std::move(shape), dtype, MemLoc::Device);
@@ -54,7 +52,7 @@ static nlohmann::json reshape_settings(std::vector<int64_t> shape) {
   return nlohmann::json{{"shape", shape}};
 }
 
-static void expect_near_oracle(const std::vector<std::byte> &actual,
+static void expect_near_reference(const std::vector<std::byte> &actual,
                                const std::vector<std::byte> &expected, DType dtype,
                                float rtol = 1e-5f) {
   ASSERT_EQ(actual.size(), expected.size());
@@ -108,26 +106,26 @@ TEST_F(ReshapeInferTest, RejectsInvalidShapeSpec) {
   EXPECT_THROW(factory.infer({&in, 1}, reshape_settings({-1, -1})), std::invalid_argument);
 }
 
-class ReshapeOracleTest : public ::testing::Test {
+class ReshapeReferenceTest : public ::testing::Test {
 protected:
   holonp::ReshapeFactory factory;
 };
 
-TEST_F(ReshapeOracleTest, CopyModeMatchesOracle) {
+TEST_F(ReshapeReferenceTest, CopyModeMatchesReference) {
   const TDesc in    = device_desc({2, 3}, DType::F32);
   auto        j     = reshape_settings({3, 2});
   j["copy"]         = true;
   const auto ibytes = as_bytes(std::vector<float>{1, 2, 3, 4, 5, 6});
   const auto run    = holonp_test::run_sync_factory(factory, {&in, 1}, {&ibytes, 1}, j);
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "reshape";
   oi.n_outputs      = 1;
   oi.input_descs    = {in};
   oi.input_bytes    = {ibytes};
   oi.settings       = j;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::F32);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::F32);
 }
 
 class ReshapeUpdateTest : public ::testing::Test {
@@ -142,14 +140,14 @@ TEST_F(ReshapeUpdateTest, ReusesReshapeTaskOnSameConfig) {
   const auto ibytes = as_bytes(std::vector<float>{1, 2, 3, 4, 5, 6});
   const auto run    = holonp_test::run_sync_factory_update(factory, {&in, 1}, {&ibytes, 1}, j);
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "reshape";
   oi.n_outputs      = 1;
   oi.input_descs    = {in};
   oi.input_bytes    = {ibytes};
   oi.settings       = j;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::F32);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::F32);
 }
 
 TEST_F(ReshapeUpdateTest, RecreatesOnWrongTaskType) {
@@ -185,12 +183,12 @@ TEST_F(ReshapeUpdateTest, RecreatesOnWrongTaskType) {
   EXPECT_NO_THROW((void)task->execute(ctx));
   CUDA_CHECK(cudaStreamSynchronize(stream.get()));
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "reshape";
   oi.n_outputs      = 1;
   oi.input_descs    = {in};
   oi.input_bytes    = {ibytes};
   oi.settings       = j;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_near_oracle(out_buf.download(), oracle.output_bytes[0], DType::F32);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_near_reference(out_buf.download(), reference.output_bytes[0], DType::F32);
 }

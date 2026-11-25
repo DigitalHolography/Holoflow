@@ -17,7 +17,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <filesystem>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -26,7 +25,7 @@
 #include "holoflow/core/tensor.hh"
 #include "holonp/rfft2.hh"
 
-#include "python_oracle.hh"
+#include "reference_ops.hh"
 #include "sync_task_runner.hh"
 
 using holoflow::core::DType;
@@ -34,7 +33,6 @@ using holoflow::core::MemLoc;
 using holoflow::core::TaskKind;
 using holoflow::core::TDesc;
 
-static const std::filesystem::path kOracleScript{HOLONP_TEST_ORACLE_SCRIPT};
 
 static TDesc device_desc(std::vector<size_t> shape, DType dtype) {
   return TDesc(std::move(shape), dtype, MemLoc::Device);
@@ -77,26 +75,26 @@ TEST_F(RFFT2InferTest, RejectsUnsupportedAxes) {
                std::invalid_argument);
 }
 
-class RFFT2OracleTest : public ::testing::Test {
+class RFFT2ReferenceTest : public ::testing::Test {
 protected:
   holonp::RFFT2Factory factory;
 };
 
-TEST_F(RFFT2OracleTest, F32DefaultAxes) {
+TEST_F(RFFT2ReferenceTest, F32DefaultAxes) {
   const TDesc d    = device_desc({2, 4}, DType::F32);
   const auto  data = as_bytes(std::vector<float>{1.f, 2.f, 3.f, 4.f, 0.f, -1.f, 2.f, -3.f});
   const auto  j    = nlohmann::json::object();
   const auto  run  = holonp_test::run_sync_factory(factory, std::vector<TDesc>{d},
                                                    std::vector<std::vector<std::byte>>{data}, j);
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "rfft2";
   oi.n_outputs      = 1;
   oi.input_descs    = {d};
   oi.input_bytes    = {data};
   oi.settings       = j;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_cf32_near(run.output_bytes[0], oracle.output_bytes[0]);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_cf32_near(run.output_bytes[0], reference.output_bytes[0]);
 }
 
 class RFFT2UpdateTest : public ::testing::Test {
@@ -111,12 +109,12 @@ TEST_F(RFFT2UpdateTest, ReusesTaskWithSameConfig) {
   const auto  run  = holonp_test::run_sync_factory_update(
       factory, std::vector<TDesc>{d}, std::vector<std::vector<std::byte>>{data}, j);
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "rfft2";
   oi.n_outputs      = 1;
   oi.input_descs    = {d};
   oi.input_bytes    = {data};
   oi.settings       = j;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_cf32_near(run.output_bytes[0], oracle.output_bytes[0]);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_cf32_near(run.output_bytes[0], reference.output_bytes[0]);
 }

@@ -14,6 +14,6 @@
         "BalanceWhiteMarker": "Off",
         "ExposureTime": 24,
         "CycleMinimumPeriod": 27,
-        "Offset": [0, 8]
+        "Offsets": [0, 8]
     }
 }

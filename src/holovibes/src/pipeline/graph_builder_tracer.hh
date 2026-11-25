@@ -23,6 +23,7 @@
 #include "holoflow/core/graph_spec.hh"
 #include "holoflow/core/registry.hh"
 #include "holoflow/core/tasks.hh"
+#include "holoflow/runtime/graph_display.hh"
 
 namespace holovibes::pipeline {
 
@@ -64,6 +65,13 @@ protected:
   // Convert a span of TDesc to the core representation.
   [[nodiscard]] static std::vector<holoflow::core::TDesc> to_core_descs(std::span<const TDesc> src);
 
+  // Available after a task factory rejects a tensor while the graph is still being built.
+  [[nodiscard]] std::string failure_graph_dot(
+      const holoflow::core::GraphSpecDumpPreferences &prefs) const;
+
+  template <typename InferFn>
+  auto infer_node(V vertex, std::span<const TDesc> inputs, InferFn &&infer);
+
   // Wrap the output descriptors returned by a factory's infer() call into traced TDescs.
   template <class InferResult>
   [[nodiscard]] static std::vector<TDesc> wrap_infer_outputs(std::string_view node_id, V vertex,
@@ -103,6 +111,15 @@ protected:
   holoflow::core::GraphSpec g_;
   std::stack<std::string>   scope_;
   size_t                    unique_id_counter_ = 0;
+
+private:
+  struct InferenceFailure {
+    V                                  vertex;
+    std::vector<holoflow::core::TDesc> inputs;
+    std::string                        message;
+  };
+
+  std::optional<InferenceFailure> inference_failure_;
 };
 
 } // namespace holovibes::pipeline

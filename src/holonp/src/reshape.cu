@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "holonp/reshape.hh"
+#include "utils/tensor_common.hh"
 
 #include "curaii/cuda.hh"
 
@@ -66,15 +67,16 @@ std::vector<size_t> resolve_shape(const std::vector<int64_t> &target_shape, size
 // Returns std::nullopt if the required layout changes force a copy.
 std::optional<std::vector<size_t>> compute_view_strides(const std::vector<size_t> &old_shape,
                                                         const std::vector<size_t> &old_strides,
-                                                        const std::vector<size_t> &new_shape) {
+                                                        const std::vector<size_t> &new_shape,
+                                                        size_t                    element_size) {
 
   // Edge case: Empty tensor. Just return standard C-contiguous strides.
   size_t numel = 1;
   for (auto s : old_shape)
     numel *= s;
   if (numel == 0) {
-    std::vector<size_t> new_strides(new_shape.size(), 1);
-    size_t              current_stride = 1;
+    std::vector<size_t> new_strides(new_shape.size(), element_size);
+    size_t              current_stride = element_size;
     for (size_t i = new_shape.size(); i > 0; --i) {
       new_strides[i - 1] = current_stride;
       // Use max(1, ...) so preceding dims don't get a 0 stride
@@ -132,7 +134,7 @@ std::optional<std::vector<size_t>> compute_view_strides(const std::vector<size_t
     }
 
     // Determine the base stride for the new chunk.
-    size_t current_stride = 1;
+    size_t current_stride = element_size;
     if (o_idx < o_end) {
       current_stride = old_strides[o_end - 1];
       // Search backwards to use the innermost non-1 dimension for a reliable base stride
@@ -185,11 +187,6 @@ __global__ void reshape_copy_kernel(const std::byte *__restrict__ src, std::byte
   }
 }
 
-bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
-  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
-         a.mem_loc == b.mem_loc && a.offset == b.offset;
-}
-
 // -------------------------------------------------------------------------------------------------
 // Reshape task implementation
 // -------------------------------------------------------------------------------------------------
@@ -205,6 +202,14 @@ public:
 
   Reshape(ReshapeSettings settings, holoflow::core::TDesc idesc)
       : is_view_(true), settings_(std::move(settings)), idesc_(std::move(idesc)) {}
+
+  bool supports_cuda_graph() const noexcept override { return true; }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    std::atomic<bool>       cancelled{false};
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, &cancelled, nullptr, nullptr};
+    (void)execute(execution);
+  }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
@@ -262,7 +267,8 @@ ReshapeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   auto        settings = jsettings.get<ReshapeSettings>();
 
   auto out_shape    = resolve_shape(settings.shape, src.num_elements());
-  auto view_strides = compute_view_strides(src.shape, src.strides, out_shape);
+  auto view_strides = compute_view_strides(src.shape, src.strides, out_shape,
+                                           holoflow::core::size_of(src.dtype));
 
   // Decide if we must copy
   bool must_copy = false;
@@ -306,7 +312,8 @@ ReshapeFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   auto        settings = jsettings.get<ReshapeSettings>();
 
   auto resolved_shape = resolve_shape(settings.shape, src.num_elements());
-  auto view_strides   = compute_view_strides(src.shape, src.strides, resolved_shape);
+  auto view_strides   = compute_view_strides(src.shape, src.strides, resolved_shape,
+                                             holoflow::core::size_of(src.dtype));
 
   bool doing_copy = settings.copy.value_or(!view_strides.has_value());
 
@@ -343,6 +350,7 @@ ReshapeFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                        std::span<const holoflow::core::TDesc>     input_descs,
                        const nlohmann::json                      &jsettings,
                        const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
 
   auto *old_reshape = dynamic_cast<Reshape *>(old_task.get());
 
@@ -351,13 +359,16 @@ ReshapeFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     const auto &new_idesc    = input_descs[0];
     const auto &old_idesc    = old_reshape->idesc();
 
-    bool can_reuse = (new_settings == old_reshape->settings()) && same_desc(new_idesc, old_idesc);
+    bool can_reuse =
+        (new_settings == old_reshape->settings()) && utils::same_desc(new_idesc, old_idesc);
 
     if (can_reuse) {
       old_reshape->update_stream(ctx.stream);
       return old_task;
     }
   }
+
+  ctx.invalidate_execution();
 
   return create(input_descs, jsettings, ctx);
 }

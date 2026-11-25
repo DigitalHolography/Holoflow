@@ -30,6 +30,7 @@
 #include "holoflow/core/tensor.hh"
 
 class QLabel;
+class QTimer;
 
 namespace holovibes::ui {
 
@@ -54,13 +55,18 @@ public:
   void set_slice_guides(const std::vector<QRectF> &bands);
   void set_reticle_enabled(bool enabled);
   void set_reticle_radius(double radius);
-  void show_waiting_placeholder(const QString &message = {});
+  void set_registration_ellipse_enabled(bool enabled);
+  void set_registration_ellipse_radius(double radius);
+  /// Keep the last frame briefly while waiting for replacement data; nonpositive delays clear now.
+  void show_waiting_placeholder(const QString &message = {}, int delay_ms = 300);
 
   /// Set the active colormap
   void set_colormap(Colormap cmap);
 
   /// Set the display range for mapping float data (or adjusting contrast on integers)
   void set_value_range(float vmin, float vmax);
+  /// Invert the normalized grayscale or colormap lookup value without changing tensor data.
+  void set_display_inverted(bool inverted);
 
 public slots:
   void presentTensor(const QByteArray &bytes, int width, int height, holoflow::core::DType dtype);
@@ -98,6 +104,8 @@ private:
   void  initializeReticle();
   void  initializeColormaps();
   void  drawReticle();
+  void  drawRegistrationEllipse();
+  void  apply_waiting_placeholder();
 
   bool   fit_to_panel_ = false;
   GLuint tex_          = 0;
@@ -110,34 +118,41 @@ private:
   GLuint reticle_prog_      = 0;
   GLint  reticle_color_loc_ = -1;
 
-  GLuint                colormap_tex_      = 0;
-  GLint                 tex_loc_           = -1;
-  GLint                 cmap_tex_loc_      = -1;
-  GLint                 use_cmap_loc_      = -1;
-  GLint                 vmin_loc_          = -1;
-  GLint                 vmax_loc_          = -1;
-  GLint                 vertical_flip_loc_ = -1;
-  bool                  vertical_flip_     = false;
-  bool                  retain_frame_ = false, restore_frame_ = false;
-  QByteArray            retained_frame_;
-  QSize                 retained_size_;
-  holoflow::core::DType retained_dtype_ = holoflow::core::DType::U8;
+  GLuint colormap_tex_ = 0;
+  GLint  tex_loc_      = -1;
+  GLint  cmap_tex_loc_ = -1;
+  GLint  use_cmap_loc_ = -1;
+  GLint  vmin_loc_     = -1;
+  GLint  vmax_loc_     = -1;
+  GLint  invert_display_loc_ = -1;
+  GLint  vertical_flip_loc_ = -1;
 
   int  img_w_ = 0, img_h_ = 0;
   bool texture_storage_allocated_ = false;
 
   bool   reticle_enabled_ = false;
   double reticle_radius_  = 1.0;
+  bool   registration_ellipse_enabled_ = false;
+  double registration_ellipse_radius_  = 1.0;
 
   Colormap cmap_ = Colormap::Grayscale;
   float    vmin_ = 0.0f;
   float    vmax_ = 1.0f;
+  bool     display_inverted_ = false;
+  bool     vertical_flip_ = false;
+  bool     retain_frame_ = false;
+  bool     restore_frame_ = false;
+  QByteArray retained_frame_;
+  QSize retained_size_;
+  holoflow::core::DType retained_dtype_ = holoflow::core::DType::U8;
 
   // Track current dtype to reallocate texture format if it changes
   holoflow::core::DType current_dtype_ = holoflow::core::DType::U8;
 
   std::optional<QSize> fixed_aspect_size_{std::nullopt};
   QLabel              *waiting_label_ = nullptr;
+  QTimer              *waiting_timer_ = nullptr;
+  QString              pending_waiting_message_;
 };
 
 } // namespace holovibes::ui

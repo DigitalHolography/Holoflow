@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <memory>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -21,7 +22,7 @@
 #include "holoflow/core/tasks.hh"
 
 namespace holovibes::ui {
-class ZernikeHistoryWidget;
+struct SignalHistoryDispatcherProvider;
 }
 
 namespace holovibes::tasks::sinks {
@@ -53,7 +54,8 @@ void from_json(const nlohmann::json &j, DisplaySignalHistorySettings &settings);
 
 class DisplaySignalHistoryFactory : public holoflow::core::ISyncTaskFactory {
 public:
-  explicit DisplaySignalHistoryFactory(holovibes::ui::ZernikeHistoryWidget *widget);
+  explicit DisplaySignalHistoryFactory(
+      std::shared_ptr<holovibes::ui::SignalHistoryDispatcherProvider> dispatchers);
 
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;
@@ -68,7 +70,7 @@ public:
          const holoflow::core::SyncCreateCtx &ctx) const override;
 
 private:
-  holovibes::ui::ZernikeHistoryWidget *widget_;
+  std::shared_ptr<holovibes::ui::SignalHistoryDispatcherProvider> dispatchers_;
 };
 
 } // namespace holovibes::tasks::sinks

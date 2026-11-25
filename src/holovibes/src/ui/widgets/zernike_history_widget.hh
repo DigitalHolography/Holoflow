@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "signal_history.hh"
+#include "signal_history_dispatcher.hh"
 
 class QLabel;
 class QTimer;
@@ -48,11 +49,6 @@ struct ZernikeHistoryDisplaySettings {
   bool             show_statistics     = true;
 
   bool operator==(const ZernikeHistoryDisplaySettings &) const = default;
-};
-
-struct ZernikeHistorySample {
-  int          noll_index;
-  SignalSample sample;
 };
 
 class ZernikeHistoryWidget : public QWidget {

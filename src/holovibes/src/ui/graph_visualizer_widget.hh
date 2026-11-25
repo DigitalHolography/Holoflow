@@ -37,6 +37,7 @@ public:
 
 signals:
   void reload_requested();
+  void open_file_requested();
 
 private:
   void fit_graph();

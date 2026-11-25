@@ -32,6 +32,7 @@
 #include <QFileInfoList>
 #include <QFormLayout>
 #include <QFrame>
+#include <QFutureWatcher>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QKeySequence>
@@ -42,6 +43,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QScopedValueRollback>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSettings>
@@ -57,6 +59,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QtConcurrent>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -65,9 +68,12 @@
 #include <functional>
 #include <limits>
 #include <optional>
+#include <utility>
 
 #include "bug.hh"
+#include "holocam/camera_info.hh"
 #include "holofile/holofile.hh"
+#include "holotask/sinks/ffmpeg_formats.hh"
 #include "logger.hh"
 #include "settings_loader.hh"
 #include "ui/graph_visualizer_widget.hh"
@@ -79,9 +85,16 @@
 
 namespace {
 
+static const std::map<std::string, std::string> camera_type_to_config_key{
+    {"Ametek S710 Euresys Coaxlink Octo", "s710"},
+    {"Ametek S711 Euresys Coaxlink QSFP+", "s711"},
+    {"Ametek S991 Euresys Coaxlink QSFP+", "s991"},
+};
+
 constexpr int  kLargeSpinMax             = 1024 * 1024;
 constexpr int  kTopBarHeight             = 30;
 constexpr auto kDefaultSamplingFrequency = 37'000.0;
+constexpr auto kKeepCurrentConfigKey     = "preferences/always_keep_current_config";
 
 QSpinBox *create_spin_box(QWidget *parent, int minimum, int maximum, int value) {
   auto *spin_box = new QSpinBox(parent);
@@ -400,7 +413,6 @@ class PreferencesDialog : public QDialog {
 public:
   using GraphSpecDumpPreferences     = holoflow::core::GraphSpecDumpPreferences;
   using GraphCompiledDumpPreferences = holoflow::runtime::GraphCompiledDumpPreferences;
-  // TODO : find the right import
 
   PreferencesDialog(QWidget *parent, holovibes::pipeline::Manager &manager)
       : QDialog(parent), manager_(manager) {
@@ -408,6 +420,18 @@ public:
     setMinimumWidth(400);
 
     auto *dialog_layout = new QVBoxLayout(this);
+
+    auto *import_group_box        = new QGroupBox(tr("Import"), this);
+    auto *import_form             = new QFormLayout();
+    keep_current_config_checkbox_ = new QCheckBox(tr("Always keep current config"), this);
+    keep_current_config_checkbox_->setChecked(
+        QSettings().value(kKeepCurrentConfigKey, false).toBool());
+    keep_current_config_checkbox_->setToolTip(
+        tr("Keep the current processing settings, including Time Window and Time Stride, when "
+           "opening a new .holo file. When off, load settings saved in the file if available."));
+    import_form->addRow(keep_current_config_checkbox_);
+    import_group_box->setLayout(import_form);
+    dialog_layout->addWidget(import_group_box);
 
     auto *splitter = new QSplitter(Qt::Horizontal, this);
 
@@ -420,7 +444,20 @@ public:
         setup_graph_compiled_dump_preferences(manager_.get_graph_compiled_dump_preferences());
     splitter->addWidget(graph_compiled_dump_group_box);
 
+    auto *runtime_failure_group_box = new QGroupBox(tr("Failure Diagnostics"), this);
+    auto *runtime_failure_form      = new QFormLayout();
+    runtime_failure_graph_checkbox_ = new QCheckBox(this);
+    runtime_failure_graph_checkbox_->setChecked(manager_.dump_runtime_failure_graphs());
+    runtime_failure_graph_checkbox_->setToolTip(
+        tr("Save graph_build_failure.dot when a task rejects an input while the pipeline is being "
+           "built, compilation_failure.dot for compiler errors, and runtime_failure.dot for "
+           "runtime errors and Windows exceptions."));
+    runtime_failure_form->addRow(tr("Dump graph on failure"), runtime_failure_graph_checkbox_);
+    runtime_failure_group_box->setLayout(runtime_failure_form);
+    splitter->addWidget(runtime_failure_group_box);
+
     dialog_layout->addWidget(splitter);
+
     // Apply / Close
     auto *button_box = new QDialogButtonBox(QDialogButtonBox::Close, this);
     apply_button_    = button_box->addButton(tr("Apply"), QDialogButtonBox::ActionRole);
@@ -650,6 +687,10 @@ private:
 
     manager_.update_graph_spec_dump_preferences(graph_spec_dump_preferences);
     manager_.update_graph_compiled_dump_preferences(graph_compiled_dump_preferences);
+    manager_.set_dump_runtime_failure_graphs(runtime_failure_graph_checkbox_->isChecked());
+    QSettings settings;
+    settings.setValue(kKeepCurrentConfigKey, keep_current_config_checkbox_->isChecked());
+    settings.sync();
   }
 
   void connect_signals() {
@@ -698,6 +739,10 @@ private:
             &QCheckBox::toggled, this, [this](bool) { apply_button_->setEnabled(true); });
     connect(graph_compiled_dump_preferences_widgets_.resources_toggle_checkbox_,
             &QCheckBox::toggled, this, [this](bool) { apply_button_->setEnabled(true); });
+    connect(runtime_failure_graph_checkbox_, &QCheckBox::toggled, this,
+            [this](bool) { apply_button_->setEnabled(true); });
+    connect(keep_current_config_checkbox_, &QCheckBox::toggled, this,
+            [this](bool) { apply_button_->setEnabled(true); });
   }
 
   holovibes::pipeline::Manager &manager_;
@@ -740,6 +785,8 @@ private:
     QCheckBox *resources_toggle_checkbox_ = nullptr;
   };
   GraphCompiledDumpPreferencesWidgets graph_compiled_dump_preferences_widgets_;
+  QCheckBox                          *runtime_failure_graph_checkbox_ = nullptr;
+  QCheckBox                          *keep_current_config_checkbox_   = nullptr;
 };
 
 } // namespace
@@ -956,8 +1003,14 @@ void MainWindow::setup_main_layout() {
   monitor_widget_ = new SystemMonitorWidget(right_sidebar_);
   monitor_widget_->setObjectName("systemMonitorPanel");
   monitor_widget_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+
+  record_widget_ = new RecordMonitorWidget(right_sidebar_);
+  record_widget_->setObjectName("recordMonitorPanel");
+  record_widget_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+
   selected_widget_settings_panel_ = new SelectedWidgetSettingsPanel(right_sidebar_);
   right_sidebar_layout->addWidget(monitor_widget_);
+  right_sidebar_layout->addWidget(record_widget_);
   right_sidebar_layout->addWidget(selected_widget_settings_panel_, 1);
 
   const int right_sidebar_width = std::max(280, right_sidebar_->sizeHint().width());
@@ -986,6 +1039,7 @@ void MainWindow::refresh_visualization_availability() {
       autofocus->is_z5_enabled() || autofocus->is_z6_enabled() || autofocus->is_z7_enabled() ||
       autofocus->is_z8_enabled() || autofocus->is_z9_enabled() || autofocus->is_z10_enabled();
   const bool single_reference_slopes = !autofocus->use_graph_laplacian();
+  const bool registration_enabled    = view_widget_->is_registration_enabled();
 
   const auto autofocus_message = tr("Enable Auto Focus to generate this visualization.");
   const auto zernike_order_message =
@@ -1008,6 +1062,10 @@ void MainWindow::refresh_visualization_availability() {
        {autofocus_enabled && single_reference_slopes,
         autofocus_enabled ? xcorr_message : autofocus_message}},
       {"xy_raw", {!mtd, tr("Raw playback is not generated in tomographic volume mode.")}},
+      {"registration_xcorr",
+       {registration_enabled, registration_enabled
+                                  ? QString{}
+                                  : tr("Enable Registration to generate this visualization.")}},
       {"raw_spectrum", {false, spectrum_message}},
       {"processed_spectrum", {false, spectrum_message}},
       {"xz_processed", {mtd, cuts_message}},
@@ -1055,8 +1113,15 @@ QString MainWindow::sanitize_recording_token(const QString &value) const {
 QString MainWindow::recording_file_name(int acquisition_id) const {
   const QString patient = sanitize_recording_token(patient_line_edit_->text());
   const QString eye     = sanitize_recording_token(eye_side_combo_->currentText());
-  return QString("%1_%2_%3_%4.holo")
-      .arg(patient, eye, session_id_, acquisition_label(acquisition_id));
+  const QString format =
+      export_widget_ == nullptr ? QStringLiteral("holo") : export_widget_->get_format();
+  const auto   *format_info = holotask::sinks::ffmpeg_format(format.toStdString());
+  const QString extension =
+      format_info == nullptr
+          ? QStringLiteral("holo")
+          : QString::fromUtf8(format_info->extension.data(), format_info->extension.size());
+  return QString("%1_%2_%3_%4.%5")
+      .arg(patient, eye, session_id_, acquisition_label(acquisition_id), extension);
 }
 
 QString MainWindow::acquisition_label(int acquisition_id) const {
@@ -1103,20 +1168,9 @@ void MainWindow::configure_unsupported_features() {
     return;
   }
 
-  const QString registration_tooltip =
-      tr("Visible for planned support. The current pipeline does not support registration yet.");
   const QString convolution_tooltip =
       tr("Visible for planned support. The current pipeline does not support convolution kernels "
          "yet.");
-
-  {
-    QSignalBlocker blocker(view_widget_->registration_check());
-    view_widget_->set_registration_enabled(false);
-  }
-  view_widget_->registration_check()->setEnabled(false);
-  view_widget_->registration_check()->setToolTip(registration_tooltip);
-  view_widget_->registration_radius()->setEnabled(false);
-  view_widget_->registration_radius()->setToolTip(registration_tooltip);
 
   {
     QSignalBlocker blocker(render_widget_->convolution_combo());
@@ -1150,6 +1204,8 @@ void MainWindow::refresh_command_bar() {
   stop_command_button_->setEnabled(import_widget_->stop_button()->isEnabled());
   record_command_button_->setEnabled(export_widget_->record_button()->isEnabled());
   stop_record_command_button_->setEnabled(export_widget_->stop_button()->isEnabled());
+  render_widget_->set_spatial_contrast_appearance_locked(
+      export_in_progress_ || update_in_progress_ || pending_recording_acquisition_id_.has_value());
 
   if (pause_requested_) {
     set_status_label(pipeline_status_label_, "Pausing", "warning");
@@ -1210,6 +1266,12 @@ void MainWindow::save_persistent_state() {
       "view/mtd",
       QString::fromStdString(nlohmann::json(view_widget_->mtd_controls()->settings()).dump()));
 
+  settings.beginGroup("preferences");
+  settings.setValue("dump_runtime_failure_graphs",
+                    pipeline_manager_ ? pipeline_manager_->dump_runtime_failure_graphs()
+                                      : dump_runtime_failure_graphs_);
+  settings.endGroup();
+
   settings.beginGroup("main_window");
   settings.setValue("geometry", saveGeometry());
   settings.endGroup();
@@ -1257,10 +1319,21 @@ void MainWindow::save_persistent_state() {
   settings.setValue("accumulation", view_widget_->get_accumulation());
   settings.setValue("flatfield", view_widget_->is_flatfield_enabled());
   settings.setValue("flatfield_cutoff_period_um", view_widget_->get_flatfield_cutoff_period_um());
+  settings.remove("spatial_contrast");
+  settings.setValue("spatial_contrast_window_size",
+                    render_widget_->get_spatial_contrast_window_size());
+  settings.remove("spatial_contrast_dimensions");
+  settings.remove("spatial_contrast_temporal_frames");
+  settings.setValue("spatial_contrast_method", render_widget_->get_spatial_contrast_method());
+  settings.setValue("spatial_contrast_display_max",
+                    render_widget_->get_spatial_contrast_display_max());
+  settings.setValue("spatial_contrast_invert_display",
+                    render_widget_->is_spatial_contrast_display_inverted());
   settings.setValue("range_start", view_widget_->get_range_start());
   settings.setValue("range_end", view_widget_->get_range_end());
   settings.setValue("registration", view_widget_->is_registration_enabled());
   settings.setValue("registration_radius", view_widget_->get_registration_radius());
+  settings.setValue("registration_ellipse", view_widget_->is_registration_ellipse_enabled());
   settings.setValue("reticle", view_widget_->is_reticle_enabled());
   settings.setValue("reticle_radius", view_widget_->get_reticle_radius());
   settings.setValue("pct", view_widget_->is_pct_enabled());
@@ -1270,6 +1343,9 @@ void MainWindow::save_persistent_state() {
   settings.beginGroup("export");
   settings.setValue("enabled", export_widget_->isChecked());
   settings.setValue("image_type", export_widget_->get_image_type());
+  settings.setValue("format", export_widget_->get_format());
+  settings.setValue("codec", export_widget_->get_codec());
+  settings.setValue("resize_algorithm", export_widget_->get_resize_algorithm());
   settings.setValue("file_path", export_widget_->get_file_path());
   settings.setValue("tag", export_widget_->get_tag());
   settings.setValue("frame_count_enabled", export_widget_->is_frame_count_enabled());
@@ -1311,6 +1387,10 @@ void MainWindow::save_persistent_state() {
 
 void MainWindow::restore_persistent_state() {
   QSettings settings;
+
+  settings.beginGroup("preferences");
+  dump_runtime_failure_graphs_ = settings.value("dump_runtime_failure_graphs", false).toBool();
+  settings.endGroup();
 
   settings.beginGroup("main_window");
   if (settings.contains("geometry")) {
@@ -1403,6 +1483,27 @@ void MainWindow::restore_persistent_state() {
   view_widget_->set_flatfield_cutoff_period_um(
       settings.value("flatfield_cutoff_period_um", view_widget_->get_flatfield_cutoff_period_um())
           .toDouble());
+  const bool has_legacy_spatial_contrast     = settings.contains("spatial_contrast");
+  const bool legacy_spatial_contrast_enabled = settings.value("spatial_contrast", false).toBool();
+  const int  legacy_spatial_contrast_dimensions =
+      settings.value("spatial_contrast_dimensions", 2).toInt();
+  if (has_legacy_spatial_contrast) {
+    render_widget_->set_spatial_contrast_mode(legacy_spatial_contrast_enabled,
+                                              legacy_spatial_contrast_dimensions);
+  }
+  render_widget_->set_spatial_contrast_window_size(
+      settings
+          .value("spatial_contrast_window_size", render_widget_->get_spatial_contrast_window_size())
+          .toInt());
+  render_widget_->set_spatial_contrast_method(
+      settings.value("spatial_contrast_method", render_widget_->get_spatial_contrast_method())
+          .toString());
+  render_widget_->spatial_contrast_display_max()->setValue(
+      settings
+          .value("spatial_contrast_display_max", render_widget_->get_spatial_contrast_display_max())
+          .toDouble());
+  render_widget_->set_spatial_contrast_display_inverted(
+      settings.value("spatial_contrast_invert_display", false).toBool());
   view_widget_->range_start_spin()->setValue(
       settings.value("range_start", view_widget_->get_range_start()).toInt());
   view_widget_->range_end_spin()->setValue(
@@ -1411,6 +1512,8 @@ void MainWindow::restore_persistent_state() {
       settings.value("registration", view_widget_->is_registration_enabled()).toBool());
   view_widget_->registration_radius()->setValue(
       settings.value("registration_radius", view_widget_->get_registration_radius()).toDouble());
+  view_widget_->set_registration_ellipse_enabled(
+      settings.value("registration_ellipse", false).toBool());
   view_widget_->reticle_check()->setChecked(
       settings.value("reticle", view_widget_->is_reticle_enabled()).toBool());
   view_widget_->reticle_radius()->setValue(
@@ -1423,6 +1526,9 @@ void MainWindow::restore_persistent_state() {
   settings.beginGroup("export");
   export_widget_->setChecked(settings.value("enabled", export_widget_->isChecked()).toBool());
   restore_combo_text(settings, "image_type", export_widget_->image_type_combo());
+  restore_combo_text(settings, "format", export_widget_->format_combo());
+  restore_combo_text(settings, "codec", export_widget_->codec_combo());
+  restore_combo_text(settings, "resize_algorithm", export_widget_->resize_algorithm_combo());
   export_widget_->set_file_path(
       settings.value("file_path", export_widget_->get_file_path()).toString());
   restore_combo_text(settings, "tag", export_widget_->tag_combo());
@@ -1592,6 +1698,7 @@ void MainWindow::initialize_display_widgets() {
   processed_spectrum_widget_   = new TensorDisplayWidget(display_workspace_);
   shack_hartmann_widget_       = new TensorDisplayWidget(display_workspace_);
   shack_hartmann_xcorr_widget_ = new TensorDisplayWidget(display_workspace_);
+  registration_xcorr_widget_   = new TensorDisplayWidget(display_workspace_);
   zernike_phase_widget_        = new TensorDisplayWidget(display_workspace_);
   zernike_history_widget_      = new ZernikeHistoryWidget(display_workspace_);
   graph_visualizer_widget_     = new GraphVisualizerWidget(display_workspace_);
@@ -1613,6 +1720,9 @@ void MainWindow::initialize_display_widgets() {
   display_workspace_->register_visualization({"shack_hartmann_xcorr", "Shack Hartmann XCorr",
                                               shack_hartmann_xcorr_widget_, "shack_hartmann",
                                               DockPlacement::Right, false});
+  display_workspace_->register_visualization({"registration_xcorr", "Registration XCorr",
+                                              registration_xcorr_widget_, "xy_processed",
+                                              DockPlacement::Tab, false});
 
   // Optional current displays use the same registry and visibility model. They default to tabs so
   // enabling one does not disturb the requested five-display hierarchy.
@@ -1629,7 +1739,7 @@ void MainWindow::initialize_display_widgets() {
                                               "xy_processed", DockPlacement::Tab, false});
   display_workspace_->register_visualization({"pipeline_graph", "Pipeline Graph",
                                               graph_visualizer_widget_, "xy_processed",
-                                              DockPlacement::Tab, false});
+                                              DockPlacement::Tab, false, false});
   display_workspace_->finalize_registration();
 
   connect(display_workspace_, &VisualizationWorkspace::selected_visualization_changed, this,
@@ -1644,12 +1754,13 @@ void MainWindow::initialize_display_widgets() {
           });
   connect(graph_visualizer_widget_, &GraphVisualizerWidget::reload_requested, this,
           &MainWindow::show_pipeline_graph);
+  connect(graph_visualizer_widget_, &GraphVisualizerWidget::open_file_requested, this,
+          &MainWindow::open_dot_file);
   connect(display_workspace_, &VisualizationWorkspace::visualization_preferences_changed, this,
           &MainWindow::refresh_visualization_availability);
 
   connect(render_widget_, &ImageRenderingWidget::settings_changed, this,
           &MainWindow::refresh_visualization_availability);
-
   connect(view_widget_, &ViewWidget::reticle_toggled, this, [this](bool checked) {
     xy_processed_widget_->set_reticle_enabled(checked);
     if (checked) {
@@ -1661,14 +1772,35 @@ void MainWindow::initialize_display_widgets() {
       xy_processed_widget_->set_reticle_radius(value);
     }
   });
+  connect(render_widget_, &ImageRenderingWidget::spatial_contrast_display_range_changed, this,
+          [this](float minimum, float maximum) {
+            xy_processed_widget_->set_value_range(minimum, maximum);
+          });
+  xy_processed_widget_->set_value_range(0.0f, 1.0f);
+  xy_processed_widget_->set_display_inverted(false);
+  connect(view_widget_->registration_ellipse_check(), &QCheckBox::toggled, this,
+          [this](bool checked) {
+            xy_processed_widget_->set_registration_ellipse_enabled(checked);
+            if (checked) {
+              xy_processed_widget_->set_registration_ellipse_radius(
+                  view_widget_->get_registration_radius());
+            }
+          });
+  connect(view_widget_->registration_radius(), qOverload<double>(&QDoubleSpinBox::valueChanged),
+          this, [this](double value) {
+            if (view_widget_->is_registration_ellipse_enabled()) {
+              xy_processed_widget_->set_registration_ellipse_radius(value);
+            }
+          });
 }
 
 void MainWindow::initialize_pipeline_manager() {
   pipeline_manager_ = new pipeline::Manager(
       render_widget_->autofocus_widget(), xy_processed_widget_, xz_processed_widget_,
       yz_processed_widget_, xy_raw_widget_, raw_spectrum_widget_, processed_spectrum_widget_,
-      shack_hartmann_widget_, shack_hartmann_xcorr_widget_, zernike_phase_widget_,
-      zernike_history_widget_);
+      shack_hartmann_widget_, shack_hartmann_xcorr_widget_, registration_xcorr_widget_,
+      zernike_phase_widget_, zernike_history_widget_);
+  pipeline_manager_->set_dump_runtime_failure_graphs(dump_runtime_failure_graphs_);
   pipeline_manager_thread_ = new QThread(this);
   pipeline_manager_->moveToThread(pipeline_manager_thread_);
   pipeline_manager_thread_->start();
@@ -1722,6 +1854,15 @@ void MainWindow::connect_manager_signals() {
   connect(pipeline_manager_, &pipeline::Manager::update_pipeline_failure, this,
           &MainWindow::on_update_pipeline_failure);
 
+  connect(pipeline_manager_, &pipeline::Manager::update_record, this,
+          &MainWindow::on_update_record);
+
+  connect(pipeline_manager_, &pipeline::Manager::update_acquisition, this,
+          &MainWindow::on_update_acquisition);
+
+  connect(pipeline_manager_, &pipeline::Manager::raw_record_flushing_finished, this,
+          &MainWindow::on_raw_record_flushing_finished);
+
   connect(pipeline_manager_, &pipeline::Manager::metrics_updated, this,
           &MainWindow::on_metrics_updated, Qt::QueuedConnection);
 
@@ -1749,6 +1890,17 @@ void MainWindow::connect_manager_signals() {
               graph_visualizer_widget_->show_error(error);
             }
           });
+  connect(pipeline_manager_, &pipeline::Manager::failure_graph_ready, this,
+          [this](const QString &dot) {
+            if (graph_visualizer_widget_ == nullptr) {
+              return;
+            }
+            failure_graph_available_ = true;
+            graph_visualizer_widget_->set_reload_enabled(false);
+            display_workspace_->set_visualization_title(QStringLiteral("pipeline_graph"),
+                                                        tr("Failure Graph"));
+            graph_visualizer_widget_->render_dot(dot);
+          });
 }
 
 void MainWindow::connect_import_controls() {
@@ -1772,36 +1924,48 @@ void MainWindow::connect_import_controls() {
     if (file.isEmpty()) {
       return;
     }
+    bool file_selected = false;
     try {
       auto reader      = holofile::Reader(file.toStdString());
       auto frame_count = reader.header().frame_count;
+      {
+        QScopedValueRollback<bool> loading(loading_holofile_, true);
+        import_widget_->set_file_path(file);
+        import_widget_->set_end_index_range(0, static_cast<int>(frame_count));
+        import_widget_->set_end_index(static_cast<int>(frame_count));
+        import_widget_->set_start_index(0);
+        file_selected = true;
 
-      import_widget_->set_file_path(file);
-      import_widget_->set_end_index_range(0, static_cast<int>(frame_count));
-      import_widget_->set_end_index(static_cast<int>(frame_count));
-      import_widget_->set_start_index(0);
-
-      if (import_widget_->is_focus_mode()) {
-        refresh_mtd_mode();
-        validate_inputs();
-        update_if_running();
-        return;
-      }
-      if (reader.footer().has_value()) {
-        auto               footer        = reader.footer().value();
-        pipeline::Settings prev_settings = get_pipeline_settings();
-        prev_settings.view_type          = pipeline::ViewType::PROCESSED;
-        pipeline::Settings new_settings =
-            pipeline::old_json_to_settings(footer.pipeline_settings, prev_settings);
-        set_pipeline_settings(new_settings);
+        if (!import_widget_->is_focus_mode() &&
+            !QSettings().value(kKeepCurrentConfigKey, false).toBool() &&
+            reader.footer().has_value()) {
+          auto               footer        = reader.footer().value();
+          pipeline::Settings prev_settings = get_pipeline_settings();
+          prev_settings.view_type          = pipeline::ViewType::PROCESSED;
+          pipeline::Settings new_settings =
+              pipeline::old_json_to_settings(footer.pipeline_settings, prev_settings);
+          set_pipeline_settings(new_settings);
+        }
       }
     } catch (std::exception &e) {
       logger()->error("failed to open \"{}\": \"{}\"", file.toStdString(), e.what());
+    }
+    if (file_selected) {
+      refresh_mtd_mode();
+      refresh_command_bar();
+      if (update_in_progress_) {
+        pending_import_update_ = true;
+      } else {
+        update_if_running();
+      }
     }
   });
 }
 
 void MainWindow::connect_export_controls() {
+
+  connect(export_widget_->format_combo(), qOverload<int>(&QComboBox::currentIndexChanged), this,
+          [this](int) { update_recording_path_preview(); });
 
   connect(export_widget_, &ExportWidget::record_clicked, this,
           &MainWindow::on_export_record_clicked);
@@ -2014,6 +2178,8 @@ void MainWindow::on_start_pipeline_success() {
   refresh_visualization_availability();
   display_workspace_->set_pipeline_running(true);
   refresh_command_bar();
+
+  monitor_widget_->pipeline_progress_bar_finished();
 }
 
 void MainWindow::on_start_pipeline_failure(const QString &error) {
@@ -2025,23 +2191,33 @@ void MainWindow::on_start_pipeline_failure(const QString &error) {
   resume_in_progress_    = false;
   paused_settings_dirty_ = false;
   export_in_progress_    = false;
+  pending_recording_acquisition_id_.reset();
   import_widget_->set_start_enabled(true);
   import_widget_->set_stop_enabled(false);
   export_widget_->set_record_enabled(false);
   export_widget_->set_stop_enabled(false);
   display_workspace_->set_pipeline_running(false);
   refresh_command_bar();
+  if (failure_graph_available_) {
+    display_workspace_->set_visualization_enabled(QStringLiteral("pipeline_graph"), true);
+    display_workspace_->select_visualization(QStringLiteral("pipeline_graph"));
+    failure_graph_available_ = false;
+  }
 
   show_pipeline_error_popup(tr("An error occurred while starting the pipeline:\n%1").arg(error));
+
+  monitor_widget_->stop_pipeline_progress_bar();
 }
 
 void MainWindow::on_stop_pipeline_success() {
   logger()->info("[MainWindow::on_stop_pipeline_success]");
   if (pause_requested_) {
-    pipeline_running_   = false;
-    pipeline_paused_    = true;
-    pause_requested_    = false;
-    export_in_progress_ = false;
+    pipeline_running_      = false;
+    pipeline_paused_       = true;
+    pause_requested_       = false;
+    pending_import_update_ = false;
+    export_in_progress_    = false;
+    pending_recording_acquisition_id_.reset();
     import_widget_->set_start_enabled(true);
     import_widget_->set_stop_enabled(true);
     export_widget_->set_record_enabled(false);
@@ -2057,10 +2233,12 @@ void MainWindow::on_stop_pipeline_success() {
 void MainWindow::on_stop_pipeline_failure(const QString &error) {
   logger()->error("[MainWindow::on_stop_pipeline_failure]");
   if (pause_requested_) {
-    pipeline_running_   = false;
-    pipeline_paused_    = true;
-    pause_requested_    = false;
-    export_in_progress_ = false;
+    pipeline_running_      = false;
+    pipeline_paused_       = true;
+    pause_requested_       = false;
+    pending_import_update_ = false;
+    export_in_progress_    = false;
+    pending_recording_acquisition_id_.reset();
     import_widget_->set_start_enabled(true);
     import_widget_->set_stop_enabled(true);
     export_widget_->set_record_enabled(false);
@@ -2100,6 +2278,7 @@ void MainWindow::on_resume_pipeline_failure(const QString &error) {
   pipeline_paused_    = true;
   resume_in_progress_ = false;
   export_in_progress_ = false;
+  pending_recording_acquisition_id_.reset();
   import_widget_->set_start_enabled(true);
   import_widget_->set_stop_enabled(true);
   export_widget_->set_record_enabled(false);
@@ -2116,7 +2295,9 @@ void MainWindow::reset_pipeline_ui_after_stop() {
   pause_requested_       = false;
   resume_in_progress_    = false;
   paused_settings_dirty_ = false;
+  pending_import_update_ = false;
   export_in_progress_    = false;
+  pending_recording_acquisition_id_.reset();
   import_widget_->set_start_enabled(true);
   import_widget_->set_stop_enabled(false);
   export_widget_->set_record_enabled(false);
@@ -2126,6 +2307,7 @@ void MainWindow::reset_pipeline_ui_after_stop() {
   display_workspace_->set_pipeline_running(false);
   render_widget_->autofocus_widget()->reset_zernike_values();
   refresh_command_bar();
+  record_widget_->reset(export_widget_->get_queue_count());
 }
 
 void MainWindow::on_metrics_updated(double input_fps) {
@@ -2199,6 +2381,10 @@ void MainWindow::on_update_pipeline_success() {
   refresh_visualization_availability();
   display_workspace_->set_pipeline_running(true);
   refresh_command_bar();
+  if (pending_import_update_) {
+    pending_import_update_ = false;
+    update_if_running();
+  }
 }
 
 void MainWindow::on_update_pipeline_failure(const QString &error) {
@@ -2208,16 +2394,41 @@ void MainWindow::on_update_pipeline_failure(const QString &error) {
   pause_requested_       = false;
   resume_in_progress_    = false;
   update_in_progress_    = false;
+  pending_import_update_ = false;
   paused_settings_dirty_ = false;
   import_widget_->set_start_enabled(true);
   import_widget_->set_stop_enabled(false);
   export_in_progress_ = false;
+  pending_recording_acquisition_id_.reset();
   export_widget_->set_record_enabled(false);
   export_widget_->set_stop_enabled(false);
   display_workspace_->set_pipeline_running(false);
   refresh_command_bar();
+  if (failure_graph_available_) {
+    display_workspace_->set_visualization_enabled(QStringLiteral("pipeline_graph"), true);
+    display_workspace_->select_visualization(QStringLiteral("pipeline_graph"));
+    failure_graph_available_ = false;
+  }
 
   show_pipeline_error_popup(tr("An error occurred while updating the pipeline:\n%1").arg(error));
+}
+
+void MainWindow::on_update_record(size_t id, size_t frame_recorded, size_t writing_speed,
+                                  size_t elapsed_time) {
+  record_widget_->update_record_queue_recorded(id, static_cast<int>(frame_recorded));
+  record_widget_->update_record_writing_speed(id, writing_speed);
+  record_widget_->update_record_elapsed_time(id, elapsed_time);
+  record_widget_->free(id, false);
+}
+
+void MainWindow::on_update_acquisition(size_t id, size_t frame_acquired) {
+  record_widget_->update_record_queue_acquired(id, static_cast<int>(frame_acquired));
+}
+
+void MainWindow::on_raw_record_flushing_finished(size_t id) {
+  logger()->info("[MainWindow::on_raw_record_flushing_finished] queue {} has been flushed to disk",
+                 id);
+  record_widget_->free(id, true);
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
@@ -2250,7 +2461,7 @@ void MainWindow::on_import_start_clicked() {
     import_widget_->set_start_enabled(false);
     import_widget_->set_stop_enabled(false);
     refresh_command_bar();
-    auto pause = [manager = pipeline_manager_]() { manager->stop_pipeline(); };
+    auto pause = [manager = pipeline_manager_]() { manager->pause_pipeline(); };
     HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, pause, Qt::QueuedConnection));
     return;
   }
@@ -2283,8 +2494,23 @@ void MainWindow::on_import_start_clicked() {
   refresh_command_bar();
   pipeline::Settings settings = get_pipeline_settings();
   auto               update   = [=]() { pipeline_manager_->update_pipeline(settings); };
-  auto               start    = [=]() { pipeline_manager_->start_pipeline(); };
+
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, update, Qt::QueuedConnection));
+
+  auto start_estimation = estimate_pipeline_start_duration();
+  monitor_widget_->start_pipeline_progress_bar(start_estimation);
+  logger()->info("[MainWindow::on_import_start_clicked] pipeline start is estimated to take {} s",
+                 start_estimation);
+
+  auto t0    = std::chrono::steady_clock::now();
+  auto start = [=]() {
+    pipeline_manager_->start_pipeline();
+
+    auto t1       = std::chrono::steady_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::seconds>(t1 - t0).count();
+    logger()->info("[MainWindow::on_import_start_clicked] pipeline start took {} s", duration);
+  };
+
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, start, Qt::QueuedConnection));
 }
 
@@ -2324,12 +2550,18 @@ void MainWindow::on_export_record_clicked() {
   refresh_command_bar();
 
   std::filesystem::path record_path = makeRecordingPath(export_widget_->get_file_path());
+  refresh_command_bar();
   std::optional<size_t> frame_count;
   if (export_widget_->is_frame_count_enabled()) {
     frame_count = static_cast<size_t>(export_widget_->get_frame_count());
   }
 
-  auto start = [mgr = pipeline_manager_, record_path]() { mgr->start_raw_record(record_path); };
+  auto start = [mgr         = pipeline_manager_, record_path,
+                record_size = frame_count.has_value() ? *frame_count : 1,
+                monitor     = record_widget_]() {
+    mgr->start_raw_record(record_path);
+    monitor->set_record_size(static_cast<int>(record_size));
+  };
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, start, Qt::QueuedConnection));
 }
 
@@ -2374,12 +2606,24 @@ void MainWindow::on_raw_record_stopped_success() {
   }
   export_widget_->set_record_enabled(pipeline_running_ && export_widget_->isChecked());
   export_widget_->set_stop_enabled(false);
+
   refresh_command_bar();
 }
 
-void MainWindow::on_raw_record_stopped_failure(const QString &error) {
-  logger()->error("[MainWindow::on_raw_record_stopped_failure]");
+void MainWindow::on_raw_record_stopped_failure(const QString &error, std::optional<size_t> id) {
+  if (id.has_value()) {
+    record_widget_->free(*id, true);
+    logger()->error("[MainWindow::on_raw_record_stopped_failure] record {} failed to stop: {}", *id,
+                    error.toStdString());
+  } else {
+    logger()->error("[MainWindow::on_raw_record_stopped_failure] record failed to stop: {}",
+                    error.toStdString());
+  }
+
+  export_in_progress_ = false;
   export_widget_->set_stop_enabled(pipeline_running_);
+  export_widget_->set_record_enabled(pipeline_running_ && export_widget_->isChecked());
+
   refresh_command_bar();
   show_pipeline_error_popup(tr("An error occurred while stopping raw recording:\n%1").arg(error));
 }
@@ -2402,8 +2646,27 @@ bool MainWindow::validate_inputs() {
                                              mtd_voxel_pitch_m_);
   }
   refresh_slice_guides();
+  if (!import_widget_->is_source_valid()) {
+    auto fp = import_widget_->get_file_path();
+    logger()->error("[MainWindow::validate_inputs] source path is not valid: {}", fp.toStdString());
+    show_pipeline_error_popup(tr("Invalid source file path:\n%1").arg(fp));
+    return false;
+  }
+
   pipeline::Settings settings = get_pipeline_settings();
-  const auto         context  = build_validation_context(settings);
+  export_widget_->set_frame_batch_size(settings.recording_method == pipeline::RecordingMethod::RAW
+                                           ? settings.load_batch
+                                           : settings.cpu_out_size);
+  const auto context             = build_validation_context(settings);
+  int        max_temporal_frames = std::numeric_limits<int>::max();
+  if (settings.import_source == pipeline::ImportSource::HOLOFILE &&
+      context.source_frame_count.has_value()) {
+    const int selected_end = std::min(settings.load_end, *context.source_frame_count);
+    max_temporal_frames    = std::max(selected_end - settings.load_begin, 3);
+  }
+  render_widget_->set_time_window_max_for_temporal_lscsi(max_temporal_frames);
+  settings.time_window = render_widget_->get_time_window();
+
   QSize display_dims(context.source_width.value_or(1), context.source_height.value_or(1));
   if (settings.view_type != pipeline::ViewType::RAW &&
       settings.spacial_method == pipeline::SpacialMethod::ANGULAR_SPECTRUM &&
@@ -2497,6 +2760,15 @@ void MainWindow::apply_validation_result(const pipeline::ValidationResult &resul
       case SettingsField::PpFlatfieldCutoffPeriod:
         view_widget_->mark_flatfield_cutoff_period_invalid();
         break;
+      case SettingsField::PpSpatialContrastWindowSize:
+        render_widget_->mark_spatial_contrast_window_invalid();
+        break;
+      case SettingsField::PpSpatialContrastDimensions:
+        render_widget_->mark_spatial_contrast_dimensions_invalid();
+        break;
+      case SettingsField::PpSpatialContrastMethod:
+        render_widget_->mark_spatial_contrast_method_invalid();
+        break;
       case SettingsField::PpConvolution:
         render_widget_->mark_convolution_invalid();
         break;
@@ -2550,6 +2822,14 @@ void MainWindow::refresh_validation_tooltips(const pipeline::ValidationResult &r
       FieldBinding{SettingsField::PpAccumulation, view_widget_->accumulation_spin()},
       FieldBinding{SettingsField::PpFlatfieldCutoffPeriod,
                    view_widget_->flatfield_cutoff_period_um()},
+      FieldBinding{SettingsField::PpSpatialContrastWindowSize,
+                   render_widget_->spatial_contrast_window_size()},
+      FieldBinding{SettingsField::PpSpatialContrastDimensions,
+                   render_widget_->get_spatial_contrast_dimensions() == 3
+                       ? static_cast<QWidget *>(render_widget_->time_transform_combo())
+                       : static_cast<QWidget *>(render_widget_->space_transform_combo())},
+      FieldBinding{SettingsField::PpSpatialContrastMethod,
+                   render_widget_->spatial_contrast_method()},
       FieldBinding{SettingsField::PpConvolution, render_widget_->convolution_combo()},
       FieldBinding{SettingsField::PpRegistration, view_widget_->registration_check()},
       FieldBinding{SettingsField::RecordingPath, export_widget_->file_line_edit()},
@@ -2609,7 +2889,10 @@ MainWindow::build_validation_context(const pipeline::Settings &settings) const {
       try {
         std::ifstream cfg_file(settings.camera_config_path);
         auto          cfg_json = nlohmann::json::parse(cfg_file);
-        const auto   &cfg = cfg_json.contains("s711") ? cfg_json.at("s711") : cfg_json.at("s710");
+
+        auto        type = import_widget_->get_camera_type();
+        auto        key  = camera_type_to_config_key.at(type.toStdString());
+        const auto &cfg  = cfg_json.contains(key) ? cfg_json.at(key) : nlohmann::json();
 
         context.source_width        = cfg.at("Width").get<int>();
         context.source_height       = cfg.at("Height").get<int>();
@@ -2647,16 +2930,61 @@ void MainWindow::setup_validation_connections() {
 }
 
 void MainWindow::setup_update_connections() {
-  void (MainWindow::*cb)() = &MainWindow::update_if_running;
+  auto cb = [this]() {
+    update_if_running();
+    monitor_widget_->reset_pipeline_progress_bar();
+  };
 
   connect(import_widget_, &ImportWidget::settings_changed, this, cb);
+
   connect(export_widget_, &ExportWidget::settings_changed, this, cb);
+  connect(export_widget_, &ExportWidget::settings_changed, this,
+          [this]() { record_widget_->reset(export_widget_->get_queue_count()); });
+
   connect(render_widget_, &ImageRenderingWidget::settings_changed, this, cb);
   connect(view_widget_, &ViewWidget::settings_changed, this, cb);
   connect(display_workspace_, &VisualizationWorkspace::visualization_preferences_changed, this, cb);
+
+  void (MainWindow::*file_cb)() = &MainWindow::recording_file_path_changed;
+  connect(export_widget_, &ExportWidget::file_path_changed, this, file_cb);
+}
+
+void MainWindow::recording_file_path_changed() {
+  auto update = [=]() {
+    if (pipeline_running_)
+      pipeline_manager_->update_recording_path(export_widget_->get_file_path().toStdString());
+  };
+  HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, update, Qt::QueuedConnection));
+}
+
+int MainWindow::estimate_pipeline_start_duration() {
+  if (!export_widget_->isChecked())
+    return 30;
+
+  const double frame_count = export_widget_->get_frame_count();
+
+  constexpr double p1 = 32768.0;
+  constexpr double p2 = 65536.0;
+  constexpr double p3 = 163840.0;
+
+  constexpr double t1 = 34.0;
+  constexpr double t2 = 52.0;
+  constexpr double t3 = 161.0;
+
+  double estimated_time;
+
+  if (frame_count <= p2) {
+    estimated_time = t1 + (frame_count - p1) * (t2 - t1) / (p2 - p1);
+  } else {
+    estimated_time = t2 + (frame_count - p2) * (t3 - t2) / (p3 - p2);
+  }
+
+  return static_cast<int>(std::ceil(std::max(0.0, estimated_time)));
 }
 
 void MainWindow::update_if_running() {
+  if (loading_holofile_)
+    return;
   if (pipeline_starting_) {
     if (import_widget_->is_volume_mode())
       mtd_update_pending_ = true;
@@ -2710,9 +3038,11 @@ QSize MainWindow::guess_source_dims() {
       throw std::runtime_error(std::format("Could not open camera config file: {}", path));
     }
 
-    // FIXME: This needs to be properly handeled for more camera support
-    auto cfg_json   = nlohmann::json::parse(cfg_file);
-    auto cfg        = cfg_json.contains("s711") ? cfg_json.at("s711") : cfg_json.at("s710");
+    auto type = import_widget_->get_camera_type();
+
+    auto cfg_json = nlohmann::json::parse(cfg_file);
+
+    auto cfg        = cfg_json.at(camera_type_to_config_key.at(type.toStdString()));
     int  src_width  = cfg.at("Width").get<int>();
     int  src_height = cfg.at("Height").get<int>();
     return QSize(src_width, src_height);
@@ -2744,11 +3074,11 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
 
   // Advanced Settings
   {
-    s.cpu_in_size  = 4096;
-    s.gpu_in_size  = 1024;
-    s.cpu_rec_size = 4096;
-    s.cpu_out_size = 64;
-    s.gpu_out_size = 64;
+    s.cpu_in_size  = 1024; // TODO unused ?
+    s.gpu_in_size  = 16;
+    s.cpu_rec_size = 1024; // TODO unused ?
+    s.cpu_out_size = 4;
+    s.gpu_out_size = 2;
   }
 
   // Import Settings
@@ -2761,6 +3091,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     std::map<std::string, ImportSource> source_from_str{
         {"Ametek S710 Euresys Coaxlink Octo", ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO},
         {"Ametek S711 Euresys Coaxlink QSFP+", ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP},
+        {"Ametek S991 Euresys Coaxlink QSFP+", ImportSource::AMETEK_S991_EURESYS_COAXLINK_QSFP},
     };
     s.input_sampling_frequency_hz = import_widget_->get_sampling_frequency_hz();
 
@@ -2772,11 +3103,8 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
       s.load_fps_limit = import_widget_->get_fps_limit();
       QString method   = import_widget_->get_load_method();
       s.load_method    = method_from_str.at(method.toStdString());
-      if (render_widget_->get_time_transform() == "Principal Component Analysis") {
-        s.load_batch = 32;
-      } else {
-        s.load_batch = render_widget_->get_batch_size();
-      }
+      s.load_batch     = render_widget_->get_batch_size();
+
     } else {
       QString source       = import_widget_->get_camera_type();
       s.import_source      = source_from_str.at(source.toStdString());
@@ -2787,10 +3115,11 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
       std::ifstream cfg_file(s.camera_config_path);
       if (cfg_file.is_open()) {
         try {
+          auto type     = import_widget_->get_camera_type();
+          auto key      = camera_type_to_config_key.at(type.toStdString());
           auto cfg_json = nlohmann::json::parse(cfg_file);
-          s.load_batch  = cfg_json.contains("s711")
-                              ? cfg_json.at("s711").at("BufferPartCount").get<int>()
-                              : cfg_json.at("s710").at("BufferPartCount").get<int>();
+          s.load_batch =
+              cfg_json.contains(key) ? cfg_json.at(key).at("BufferPartCount").get<int>() : 1;
         } catch (...) {
         }
       }
@@ -2805,12 +3134,15 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
         {"None", SpacialMethod::NONE},
         {"Fresnel Diffraction", SpacialMethod::FRESNEL_DIFFRACTION},
         {"Angular Spectrum", SpacialMethod::ANGULAR_SPECTRUM},
+        {"LSCI (2D)", SpacialMethod::NONE},
     };
-    QString method        = render_widget_->get_space_transform();
-    s.spacial_method      = method_from_str.at(method.toStdString());
-    s.spacial_lambda      = static_cast<float>(render_widget_->get_lambda()) * 1e-9f;
-    s.spacial_z           = static_cast<float>(render_widget_->get_focus()) * 1e-3f;
-    s.spacial_pixel_size  = 20e-6f; // TODO: get from camera
+    QString method   = render_widget_->get_space_transform();
+    s.spacial_method = method_from_str.at(method.toStdString());
+    s.spacial_lambda = static_cast<float>(render_widget_->get_lambda()) * 1e-9f;
+    s.spacial_z      = static_cast<float>(render_widget_->get_focus()) * 1e-3f;
+
+    s.spacial_pixel_size = import_widget_->get_pixel_space_size() * 1e-6;
+
     s.asp_padding_enabled = render_widget_->is_asp_padding_enabled();
     s.asp_padded_width    = render_widget_->get_asp_padded_width();
     s.asp_padded_height   = render_widget_->get_asp_padded_height();
@@ -2828,6 +3160,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
         {"Principal Component Analysis", TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS},
         {"RFFT", TimeMethod::RFFT},
         {"FFT", TimeMethod::FFT},
+        {"LSCI (3D)", TimeMethod::NONE},
     };
     s.time_window       = render_widget_->get_time_window();
     s.time_stride       = render_widget_->get_time_stride();
@@ -2878,16 +3211,23 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.pp_flatfield = view_widget_->is_flatfield_enabled();
     s.pp_flatfield_cutoff_period_m =
         static_cast<float>(view_widget_->get_flatfield_cutoff_period_um() * 1e-6);
-    s.pp_accumulation        = static_cast<size_t>(view_widget_->get_accumulation());
-    s.pp_convolution         = render_widget_->get_convolution() != "None";
-    s.pp_convolution_path    = kernel_path;
-    s.pp_convolution_divide  = render_widget_->is_convolution_divide();
-    s.pp_pctclip             = view_widget_->is_pct_enabled();
-    s.pp_pctclip_lower       = 0.02f;
-    s.pp_pctclip_upper       = 99.98f;
-    s.pp_pctclip_radius      = view_widget_->get_pct_radius();
-    s.pp_registration        = view_widget_->is_registration_enabled();
-    s.pp_registration_radius = view_widget_->get_registration_radius();
+    s.pp_spatial_contrast             = render_widget_->is_spatial_contrast_enabled();
+    s.pp_spatial_contrast_window_size = render_widget_->get_spatial_contrast_window_size();
+    s.pp_spatial_contrast_dimensions  = render_widget_->get_spatial_contrast_dimensions();
+    s.pp_spatial_contrast_method = render_widget_->get_spatial_contrast_method() == "FFT" ? 1 : 0;
+    s.pp_spatial_contrast_display_max =
+        static_cast<float>(render_widget_->get_spatial_contrast_display_max());
+    s.pp_spatial_contrast_invert_display = render_widget_->is_spatial_contrast_display_inverted();
+    s.pp_accumulation                    = static_cast<size_t>(view_widget_->get_accumulation());
+    s.pp_convolution                     = render_widget_->get_convolution() != "None";
+    s.pp_convolution_path                = kernel_path;
+    s.pp_convolution_divide              = render_widget_->is_convolution_divide();
+    s.pp_pctclip                         = view_widget_->is_pct_enabled();
+    s.pp_pctclip_lower                   = 0.02f;
+    s.pp_pctclip_upper                   = 99.98f;
+    s.pp_pctclip_radius                  = view_widget_->get_pct_radius();
+    s.pp_registration                    = view_widget_->is_registration_enabled();
+    s.pp_registration_radius             = view_widget_->get_registration_radius();
   }
 
   // Recording Settings
@@ -2900,8 +3240,12 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     } else {
       s.recording_method = RecordingMethod::NONE;
     }
-    s.recording_path  = export_widget_->get_file_path().toStdString();
-    s.recording_count = export_widget_->get_frame_count();
+    s.recording_path             = export_widget_->get_file_path().toStdString();
+    s.recording_count            = export_widget_->get_frame_count();
+    s.recording_format           = export_widget_->get_format().toStdString();
+    s.recording_codec            = export_widget_->get_codec().toStdString();
+    s.recording_resize_algorithm = export_widget_->get_resize_algorithm().toStdString();
+    s.recording_queue_count      = export_widget_->get_queue_count();
   }
 
   // Auto-Focus Settings
@@ -3046,6 +3390,9 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
       case ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP:
         source = "Ametek S711 Euresys Coaxlink QSFP+";
         break;
+      case ImportSource::AMETEK_S991_EURESYS_COAXLINK_QSFP:
+        source = "Ametek S991 Euresys Coaxlink QSFP+";
+        break;
       default:
         source = "Ametek S710 Euresys Coaxlink Octo";
         break;
@@ -3132,6 +3479,13 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
   {
     view_widget_->set_flatfield_enabled(s.pp_flatfield);
     view_widget_->set_flatfield_cutoff_period_um(s.pp_flatfield_cutoff_period_m * 1e6);
+    render_widget_->set_spatial_contrast_mode(s.pp_spatial_contrast,
+                                              s.pp_spatial_contrast_dimensions);
+    render_widget_->set_spatial_contrast_window_size(s.pp_spatial_contrast_window_size);
+    render_widget_->set_spatial_contrast_method(s.pp_spatial_contrast_method == 1 ? "FFT"
+                                                                                  : "Kernel");
+    render_widget_->set_spatial_contrast_display_max(s.pp_spatial_contrast_display_max);
+    render_widget_->set_spatial_contrast_display_inverted(s.pp_spatial_contrast_invert_display);
     view_widget_->set_accumulation(static_cast<int>(s.pp_accumulation));
     render_widget_->set_convolution_divide(s.pp_convolution_divide);
 
@@ -3153,6 +3507,17 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
   {
     export_widget_->set_file_path(QString::fromStdString(s.recording_path.string()));
     export_widget_->set_frame_count(static_cast<int>(s.recording_count));
+    const auto format_index =
+        export_widget_->format_combo()->findData(QString::fromStdString(s.recording_format));
+    if (format_index >= 0) {
+      export_widget_->format_combo()->setCurrentIndex(format_index);
+    }
+    const auto codec_index =
+        export_widget_->codec_combo()->findData(QString::fromStdString(s.recording_codec));
+    if (codec_index >= 0) {
+      export_widget_->codec_combo()->setCurrentIndex(codec_index);
+    }
+    export_widget_->set_resize_algorithm(QString::fromStdString(s.recording_resize_algorithm));
     // recording_method not exposed (always RAW in get_pipeline_settings)
   }
 

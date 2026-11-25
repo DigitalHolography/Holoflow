@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "holonp/transpose.hh"
+#include "utils/tensor_common.hh"
 
 #include <algorithm>
 #include <numeric>
@@ -66,22 +67,6 @@ std::vector<int> normalize_axes(const std::vector<int> &axes, int ndim) {
   return norm;
 }
 
-// Ensure strides exist or create contiguous default
-std::vector<size_t> get_strides_bytes(const holoflow::core::TDesc &desc) {
-  std::vector<size_t> strides(desc.shape.size());
-  if (!desc.strides.empty()) {
-    for (size_t i = 0; i < desc.strides.size(); ++i)
-      strides.at(i) = desc.strides.at(i);
-  } else {
-    size_t acc = holoflow::core::size_of(desc.dtype);
-    for (size_t i = desc.shape.size(); i-- > 0;) {
-      strides.at(i) = acc;
-      acc *= desc.shape.at(i);
-    }
-  }
-  return strides;
-}
-
 // -------------------------------------------------------------------------------------------------
 // Transpose task implementation
 // -------------------------------------------------------------------------------------------------
@@ -90,6 +75,8 @@ class Transpose : public holoflow::core::ISyncTask {
 public:
   explicit Transpose(cudaStream_t stream) : stream_(stream) {}
 
+  bool                     supports_cuda_graph() const noexcept override { return true; }
+  void                     record_cuda_graph(holoflow::core::CudaGraphCtx &) override {}
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
   void                     update_stream(cudaStream_t stream) { stream_ = stream; }
 
@@ -127,7 +114,7 @@ TransposeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   auto axes     = normalize_axes(settings.axes, ndim);
 
   // 1. Get input strides (calculate dense ones if empty)
-  auto in_strides = get_strides_bytes(idesc);
+  auto in_strides = utils::get_byte_strides(idesc);
 
   // 2. Permute shape AND strides
   std::vector<size_t> oshape(ndim);
@@ -163,10 +150,12 @@ TransposeFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                          std::span<const holoflow::core::TDesc>     input_descs,
                          const nlohmann::json                      &jsettings,
                          const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
   (void)infer(input_descs, jsettings);
 
   auto *old_transpose = dynamic_cast<Transpose *>(old_task.get());
   if (old_transpose == nullptr || input_descs.size() != 1) {
+    ctx.invalidate_execution();
     return create(input_descs, jsettings, ctx);
   }
 

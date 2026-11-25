@@ -15,6 +15,7 @@
 #include "holotask/sinks/holofile.hh"
 
 // #include <Windows.h>
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cstddef>
@@ -32,6 +33,8 @@
 #include "holofile/holofile.hh"
 #include "holoflow/core/tasks.hh"
 #include "logger.hh"
+#include "recording_geometry.hh"
+#include "recording_sink.hh"
 
 template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
 
@@ -88,11 +91,7 @@ void mt_memcpy(void *dst, const void *src, const std::size_t n) {
   }
 }
 
-struct RecordingGeometry {
-  uint8_t  bits_per_pixel;
-  uint32_t frame_width;
-  uint32_t frame_height;
-};
+using detail::RecordingGeometry;
 
 holofile::Header make_header(int count, const RecordingGeometry &g) {
   const auto frame_count = static_cast<uint32_t>(count);
@@ -110,35 +109,6 @@ holofile::Header make_header(int count, const RecordingGeometry &g) {
   };
 }
 
-uint8_t bits_per_pixel_for(holoflow::core::DType dtype) {
-  switch (dtype) {
-  case holoflow::core::DType::U8:
-    return 8;
-  case holoflow::core::DType::U16:
-    return 16;
-  default:
-    HOLOVIBES_BUG("Unsupported Holofile dtype: {}", static_cast<int>(dtype));
-  }
-}
-
-RecordingGeometry recording_geometry_from_desc(const holoflow::core::TDesc &desc) {
-  return RecordingGeometry{
-      .bits_per_pixel = bits_per_pixel_for(desc.dtype),
-      .frame_width    = static_cast<uint32_t>(desc.shape[2]),
-      .frame_height   = static_cast<uint32_t>(desc.shape[1]),
-  };
-}
-
-size_t recording_frame_byte_size(const RecordingGeometry &geometry) {
-  return static_cast<size_t>(geometry.frame_width) * geometry.frame_height *
-         geometry.bits_per_pixel / 8;
-}
-
-bool same_geometry(const RecordingGeometry &a, const RecordingGeometry &b) {
-  return a.bits_per_pixel == b.bits_per_pixel && a.frame_width == b.frame_width &&
-         a.frame_height == b.frame_height;
-}
-
 void check(bool condition, const std::string &msg) {
   if (!condition) {
     logger()->error("[HolofileFactory] {}", msg);
@@ -151,20 +121,20 @@ void check(bool condition, const std::string &msg) {
 // -------------------------------------------------------------------------------------------------
 //
 // Two-phase recording:
-//   1. Accumulate: each execute() call memcpys incoming frames into the preallocated ring buffer.
-//   2. Flush:      once all frames are collected, write the entire buffer to disk in one shot.
+//   1. Accumulate: each execute() call copies incoming frames into the preallocated ring buffer.
+//   2. Flush:      once all frames are collected, a background writer writes that existing buffer.
 //
-// No background thread. The flush happens synchronously inside execute(), so the pipeline will
-// stall for one cycle while the file is written. For typical recording sizes this is acceptable
-// and avoids all async complexity.
+// There is no queue or second frame buffer. execute() calls arriving while the
+// background writer uses the recording buffer return promptly without acquiring frames.
 
-class HolofileWriter : public holoflow::core::ISyncTask {
+class HolofileWriter final : public detail::Sink<holofile::Writer> {
 public:
   HolofileWriter(const HolofileSettings &settings, const RecordingGeometry &geometry,
                  size_t frame_byte_size)
       : settings_(settings), geometry_(geometry), frame_byte_size_(frame_byte_size),
         ring_(curaii::make_unique_host_ptr<uint8_t>(static_cast<size_t>(settings.count) *
                                                     frame_byte_size)) {
+    set_recording_count(settings_.count);
     // Touch every page so the OS actually backs the allocation with physical memory.
     // Without this, the first recording pays the page-fault cost.
     const size_t total_bytes = static_cast<size_t>(settings.count) * frame_byte_size_;
@@ -181,183 +151,69 @@ public:
     }
   }
 
-  ~HolofileWriter() override = default;
-
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
-    handle_events(ctx);
-
-    if (!recording_)
-      return holoflow::core::OpResult::Ok;
-
-    // --- Phase 1: Accumulate frames into the buffer ---
-    if (frames_buffered_ < settings_.count) {
-      const auto  remaining  = settings_.count - frames_buffered_;
-      const auto  batch_size = static_cast<int>(ctx.inputs[0].desc.shape[0]);
-      const auto  to_copy    = std::min(remaining, batch_size);
-      const auto *idata      = reinterpret_cast<const uint8_t *>(ctx.inputs[0].data());
-
-      auto start = std::chrono::steady_clock::now();
-      mt_memcpy(ring_.get() + static_cast<size_t>(frames_buffered_) * frame_byte_size_, idata,
-                static_cast<size_t>(to_copy) * frame_byte_size_);
-      auto end         = std::chrono::steady_clock::now();
-      auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-      logger()->trace("[HolofileWriter] Buffered {} frames ({} us)", to_copy, duration_us);
-      frames_buffered_ += to_copy;
-    }
-
-    // --- Phase 2: Buffer full — flush everything to disk ---
-    if (frames_buffered_ >= settings_.count) {
-      logger()->info("[HolofileWriter] Frame buffer full ({} frames); flushing to disk...",
-                     settings_.count);
-      try {
-        flush_to_disk();
-        emit_finished_event(ctx);
-        logger()->info("[HolofileWriter] Recording complete: {} frames written to {}",
-                       frames_buffered_, settings_.path);
-      } catch (const std::exception &e) {
-        logger()->error("[HolofileWriter] Failed to finalize recording at {}: {}", settings_.path,
-                        e.what());
-        emit_failed_event(ctx, e.what());
-      }
-      reset();
-    }
-
-    return holoflow::core::OpResult::Ok;
-  }
+  ~HolofileWriter() override { shutdown_async_writer(); }
 
   bool can_reuse(const HolofileSettings &settings, const RecordingGeometry &geometry,
                  size_t frame_byte_size) const {
     return settings.use_buffer == settings_.use_buffer && settings.count == settings_.count &&
-           same_geometry(geometry, geometry_) && frame_byte_size == frame_byte_size_;
+           detail::same_geometry(geometry, geometry_) && frame_byte_size == frame_byte_size_;
   }
 
   void update_settings(const HolofileSettings &settings) {
-    const auto active_path = settings_.path;
+    // The writer thread consumes these settings to create the file/footer. Defer
+    // reconfiguration until idle rather than mutating them during an active recording.
+    if (recording_)
+      return;
+    settings_        = settings;
+    recording_path() = settings_.path;
+  }
 
-    settings_ = settings;
-    if (recording_) {
-      settings_.path = active_path;
-    }
+protected:
+  void recording_path_update_callback() override { settings_.path = recording_path(); }
+
+private:
+  int buffer_input(holoflow::core::SyncCtx &ctx, int max_frames) override {
+    const auto  batch_size = static_cast<int>(ctx.inputs[0].desc.shape[0]);
+    const auto  count      = std::min(max_frames, batch_size);
+    const auto *idata      = reinterpret_cast<const uint8_t *>(ctx.inputs[0].data());
+    const auto  start      = std::chrono::steady_clock::now();
+    mt_memcpy(ring_.get() + static_cast<size_t>(frames_buffered_) * frame_byte_size_, idata,
+              static_cast<size_t>(count) * frame_byte_size_);
+    const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
+                              std::chrono::steady_clock::now() - start)
+                              .count();
+    logger()->trace("[HolofileWriter] Buffered {} frames ({} us)", count, duration);
+    return count;
+  }
+  std::size_t         buffered_frame_size() const override { return frame_byte_size_; }
+  const std::uint8_t *buffered_data(std::size_t index) const override {
+    return ring_.get() + index * frame_byte_size_;
+  }
+  void make_writer() override {
+    emplace_writer(settings_.path, make_header(settings_.count, geometry_),
+                   holofile::Footer{.pipeline_settings = settings_.pipeline_settings});
+  }
+  void on_flush_started() override {
+    logger()->info("[HolofileWriter] Frame buffer full ({} frames); flushing to disk...",
+                   settings_.count);
+  }
+  void on_flush_finished() override {
+    logger()->info("[HolofileWriter] Recording complete: {} frames written to {}", frames_written(),
+                   settings_.path);
+  }
+  void on_execute_error(holoflow::core::SyncCtx &ctx, const std::exception &error) override {
+    logger()->error("[HolofileWriter] Failed to finalize recording at {}: {}", settings_.path,
+                    error.what());
+    reset(); // Join the writer and close any partially written output before cleanup.
+    remove_recording_file();
+    emit_failed_event(ctx, error.what());
   }
 
 private:
-  void flush_to_disk() {
-    const auto header = make_header(settings_.count, geometry_);
-    const auto footer = holofile::Footer{.pipeline_settings = settings_.pipeline_settings};
-
-    holofile::Writer writer(settings_.path, header, footer);
-    writer.write_frames(ring_.get(), static_cast<size_t>(settings_.count));
-    writer.write_footer();
-  }
-
-  void handle_events(holoflow::core::SyncCtx &ctx) {
-    if (!ctx.event_reader)
-      return;
-
-    while (true) {
-      auto event = ctx.event_reader->try_pop();
-      if (!event.has_value())
-        break;
-
-      HOLOVIBES_CHECK(event->direction == holoflow_event::EventDirection::ToNode,
-                      "Unexpected event direction");
-
-      const auto type = event->data.at("type").get<std::string>();
-
-      if (type == "start_recording") {
-        if (recording_) {
-          logger()->error("[HolofileWriter] Ignoring duplicate start_recording event");
-          emit_failed_event(ctx, "Recording already in progress");
-          continue;
-        }
-
-        const auto record_path = event->data.value("record_path", std::string{});
-        if (record_path.empty()) {
-          logger()->error("[HolofileWriter] Rejecting start_recording event with empty path");
-          emit_failed_event(ctx, "Cannot start recording: empty path");
-          continue;
-        }
-
-        if (settings_.count <= 0) {
-          const auto message = "Cannot start recording: invalid frame count (" +
-                               std::to_string(settings_.count) + ")";
-          logger()->error("[HolofileWriter] {}", message);
-          emit_failed_event(ctx, message);
-          continue;
-        }
-
-        settings_.path   = record_path;
-        frames_buffered_ = 0;
-        recording_       = true;
-
-      } else if (type == "stop_recording") {
-        if (!recording_) {
-          logger()->warn("[HolofileWriter] Ignoring stop_recording event while idle");
-          continue;
-        }
-
-        recording_       = false;
-        frames_buffered_ = 0;
-
-        if (!settings_.path.empty() && std::remove(settings_.path.c_str()) != 0 &&
-            errno != ENOENT) {
-          std::error_code ec(errno, std::generic_category());
-          logger()->error("[HolofileWriter] Failed to remove incomplete recording at {}: {}",
-                          settings_.path, ec.message());
-          emit_failed_event(ctx, "Failed to remove incomplete recording at " + settings_.path +
-                                     ": " + ec.message());
-        }
-
-      } else {
-        HOLOVIBES_BUG("Unknown event type: {}", type);
-      }
-    }
-  }
-
-  void emit_finished_event(holoflow::core::SyncCtx &ctx) {
-    auto event = holoflow_event::Event{
-        .direction = holoflow_event::EventDirection::ToUi,
-        .node_id   = "",
-        .data =
-            nlohmann::json{
-                {"type", "recording_finished"},
-                {"path", settings_.path},
-                {"frames_written", frames_buffered_},
-            },
-        .ts = std::chrono::steady_clock::now(),
-    };
-    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
-                    "Failed to emit recording_finished event");
-  }
-
-  void emit_failed_event(holoflow::core::SyncCtx &ctx, const std::string &message) {
-    auto event = holoflow_event::Event{
-        .direction = holoflow_event::EventDirection::ToUi,
-        .node_id   = "",
-        .data =
-            nlohmann::json{
-                {"type", "recording_failed"},
-                {"path", settings_.path},
-                {"message", message},
-            },
-        .ts = std::chrono::steady_clock::now(),
-    };
-    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
-                    "Failed to emit recording_failed event");
-  }
-
-  void reset() {
-    recording_       = false;
-    frames_buffered_ = 0;
-  }
-
   HolofileSettings  settings_;
   RecordingGeometry geometry_;
   size_t            frame_byte_size_;
   HostPtr<uint8_t>  ring_; ///< Preallocated at construction; reused across recordings.
-
-  bool recording_       = false;
-  int  frames_buffered_ = 0;
 };
 
 } // namespace
@@ -407,8 +263,8 @@ HolofileFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   auto  settings = jsettings.get<HolofileSettings>();
   auto &idesc    = input_descs[0];
 
-  const auto geometry        = recording_geometry_from_desc(idesc);
-  const auto frame_byte_size = recording_frame_byte_size(geometry);
+  const auto geometry        = detail::recording_geometry_from_desc(idesc);
+  const auto frame_byte_size = detail::recording_frame_byte_size(geometry);
 
   logger()->info("[HolofileFactory::create] Buffer-then-flush writer ({} frames)", settings.count);
   return std::make_unique<HolofileWriter>(settings, geometry, frame_byte_size);
@@ -426,8 +282,8 @@ HolofileFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   infer(input_descs, jsettings);
 
   const auto settings        = jsettings.get<HolofileSettings>();
-  const auto geometry        = recording_geometry_from_desc(input_descs[0]);
-  const auto frame_byte_size = recording_frame_byte_size(geometry);
+  const auto geometry        = detail::recording_geometry_from_desc(input_descs[0]);
+  const auto frame_byte_size = detail::recording_frame_byte_size(geometry);
 
   if (!old->can_reuse(settings, geometry, frame_byte_size)) {
     logger()->debug("[HolofileFactory::update] Recreating writer because buffer shape changed");

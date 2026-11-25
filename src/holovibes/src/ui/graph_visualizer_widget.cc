@@ -63,6 +63,10 @@ GraphVisualizerWidget::GraphVisualizerWidget(QWidget *parent) : QWidget(parent) 
   reload_button_->setToolTip(tr("Regenerate the pipeline graph with the current preferences."));
   reload_button_->setEnabled(false);
   toolbar->addWidget(reload_button_);
+  auto *open_button = new QToolButton(this);
+  open_button->setText(tr("Open…"));
+  open_button->setToolTip(tr("Open a Graphviz DOT file."));
+  toolbar->addWidget(open_button);
   toolbar->addStretch();
   status_ = new QLabel(tr("Select a pipeline graph or open a DOT file."), this);
   toolbar->addWidget(status_);
@@ -80,6 +84,8 @@ GraphVisualizerWidget::GraphVisualizerWidget(QWidget *parent) : QWidget(parent) 
     show_error(tr("Graphviz could not be started: %1").arg(process_->errorString()));
   });
   connect(fit_button, &QToolButton::clicked, this, &GraphVisualizerWidget::fit_graph);
+  connect(open_button, &QToolButton::clicked, this,
+          &GraphVisualizerWidget::open_file_requested);
   connect(reload_button_, &QToolButton::clicked, this, [this]() {
     reload_button_->setEnabled(false);
     status_->setText(tr("Reloading pipeline graph…"));

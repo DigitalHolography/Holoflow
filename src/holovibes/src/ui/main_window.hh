@@ -37,6 +37,7 @@
 #include "ui/widgets/export_widget.hh"
 #include "ui/widgets/image_rendering_widget.hh"
 #include "ui/widgets/import_widget.hh"
+#include "ui/widgets/record_monitor_widget.hh"
 #include "ui/widgets/system_monitor_widget.hh"
 #include "ui/widgets/view_widget.hh"
 
@@ -66,7 +67,7 @@ private slots:
   void on_raw_record_started_success();
   void on_raw_record_started_failure(const QString &error);
   void on_raw_record_stopped_success();
-  void on_raw_record_stopped_failure(const QString &error);
+  void on_raw_record_stopped_failure(const QString &error, std::optional<size_t> id);
 
 private:
   ImportWidget                *import_widget_;
@@ -74,6 +75,7 @@ private:
   ImageRenderingWidget        *render_widget_;
   ViewWidget                  *view_widget_;
   SystemMonitorWidget         *monitor_widget_;
+  RecordMonitorWidget         *record_widget_;
   SelectedWidgetSettingsPanel *selected_widget_settings_panel_;
 
   void show_pipeline_error_popup(const QString &message);
@@ -99,6 +101,11 @@ private:
   void                        refresh_slice_guides();
   void                        move_volume_slices(int plane, double x, double y);
   QString                     validation_error_message_;
+  void on_update_record(size_t id, size_t frame_recorded, size_t writing_speed,
+                        size_t elapsed_time);
+  void on_update_acquisition(size_t id, size_t frame_acquired);
+  void on_raw_record_flushing_finished(size_t id);
+
   bool                        validate_inputs();
   void                        apply_validation_result(const pipeline::ValidationResult &result);
   void                        refresh_validation_tooltips(const pipeline::ValidationResult &result);
@@ -106,6 +113,8 @@ private:
   void                        setup_validation_connections();
   void                        setup_update_connections();
   void                        update_if_running();
+  void                        recording_file_path_changed();
+  int                         estimate_pipeline_start_duration();
 
   QSize              guess_source_dims();
   QSize              processed_display_dims(QSize source_dims) const;
@@ -146,6 +155,8 @@ private:
 
   // Current state
   bool               update_in_progress_              = false;
+  bool               loading_holofile_                = false;
+  bool               pending_import_update_           = false;
   bool               pipeline_running_                = false;
   bool               pipeline_paused_                 = false;
   bool               pause_requested_                 = false;
@@ -153,6 +164,8 @@ private:
   bool               paused_settings_dirty_           = false;
   bool               export_in_progress_              = false;
   bool               geometry_restored_               = false;
+  bool               dump_runtime_failure_graphs_     = false;
+  bool               failure_graph_available_         = false;
   double             last_input_fps_                  = 0.0;
   double             signal_plot_time_window_seconds_ = 8.0;
   QString            session_id_;
@@ -160,8 +173,8 @@ private:
   std::optional<int> pending_recording_acquisition_id_;
 
   // Workers
-  pipeline::Manager *pipeline_manager_;
-  QThread           *pipeline_manager_thread_;
+  pipeline::Manager *pipeline_manager_        = nullptr;
+  QThread           *pipeline_manager_thread_ = nullptr;
 
   // Display widgets
   TensorDisplayWidget  *xy_processed_widget_;
@@ -172,6 +185,7 @@ private:
   TensorDisplayWidget  *processed_spectrum_widget_;
   TensorDisplayWidget  *shack_hartmann_widget_;
   TensorDisplayWidget  *shack_hartmann_xcorr_widget_;
+  TensorDisplayWidget  *registration_xcorr_widget_;
   TensorDisplayWidget  *zernike_phase_widget_;
   ZernikeHistoryWidget *zernike_history_widget_;
   // Application columns and central visualization workspace

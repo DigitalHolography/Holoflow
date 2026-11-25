@@ -288,6 +288,16 @@ public:
     }
   }
 
+  bool same_settings(const PcaSettings &settings) const { return settings_ == settings; }
+
+  bool supports_cuda_graph() const noexcept override { return true; }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    std::atomic<bool>       cancelled{false};
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, &cancelled, nullptr, nullptr};
+    (void)enqueue(execution);
+  }
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     nvtx3::scoped_range range("PCA Sync Task");
 
@@ -1094,6 +1104,7 @@ PcaFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                    std::span<const holoflow::core::TDesc>     input_descs,
                    const nlohmann::json                      &jsettings,
                    const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
   this->infer(input_descs, jsettings);
 
   const auto  settings   = jsettings.get<PcaSettings>();
@@ -1101,9 +1112,13 @@ PcaFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
 
   auto *pca = dynamic_cast<PcaTask *>(old_task.get());
   if (pca != nullptr && pca->can_reuse(input_desc, ctx.stream)) {
+    if (!pca->same_settings(settings))
+      ctx.invalidate_execution();
     pca->reconfigure(settings, ctx.stream);
     return old_task;
   }
+
+  ctx.invalidate_execution();
 
   return create(input_descs, jsettings, ctx);
 }

@@ -1,0 +1,23 @@
+digraph GraphSetLifecycle {
+  graph [rankdir=TB, bgcolor="white", pad=0.3, nodesep=0.4, ranksep=0.5,
+         fontname="Helvetica", fontsize=13];
+  node [shape=box, style="rounded,filled", fillcolor="#dbeafe", color="#64748b",
+        fontname="Helvetica", fontsize=12, fontcolor="#172033", margin="0.18,0.10"];
+  edge [fontname="Helvetica", fontsize=11, color="#64748b", fontcolor="#334155",
+        arrowsize=0.7];
+  inspected [label="Inspected\nOne-use compilation plan", fillcolor="#dcfce7"];
+  prepare [label="Prepare / refresh\nReuse matches; build missing\nDiscard obsolete variants"];
+  running [label="Running\nTuple lookup + graph replay"];
+  paused [label="Paused\nKeep buffers, checkpoint,\nand graph set", fillcolor="#fef3c7"];
+  stopped [label="Stopped / EOF\nDrain work; reset checkpoint", fillcolor="#dcfce7"];
+  destroyed [label="Destroyed\nExecutables released before\ntasks, streams, and buffers", fillcolor="#f1f5f9"];
+  inspected -> prepare [label="first start"];
+  prepare -> running [label="ready"];
+  running -> paused [label="pause + wait"];
+  paused -> running [label="resume\nNo preparation", constraint=false];
+  running -> stopped [label="stop / EOF + wait"];
+  stopped -> prepare [label="restart\nReinspect phases", constraint=false];
+  stopped -> inspected [label="recompile\nReuse compatible;\ninvalidate incompatible", constraint=false];
+  stopped -> destroyed [label="release resources"];
+  paused -> stopped [label="stop\nRelease held buffers"];
+}

@@ -32,10 +32,12 @@ struct ConversionSettings {
     CF32,
   };
 
-  enum class Strategy { Real, Scaled, Modulus, Argument };
+  enum class Strategy { Real, Scaled, FixedRange, Modulus, Argument };
 
   Target   target;
   Strategy strategy;
+  float    max_value = 1.0f;
+  bool     invert    = false;
 
   bool operator==(const ConversionSettings &) const = default;
 };
@@ -53,6 +55,10 @@ void from_json(const nlohmann::json &j, ConversionSettings &cs);
 
 class ConversionFactory : public holoflow::core::ISyncTaskFactory {
 public:
+  holoflow::core::ExecutionUpdatePolicy execution_update_policy() const noexcept override {
+    return holoflow::core::ExecutionUpdatePolicy::ExplicitInvalidation;
+  }
+
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;
 

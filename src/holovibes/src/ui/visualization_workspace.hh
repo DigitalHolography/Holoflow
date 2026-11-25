@@ -40,6 +40,7 @@ struct VisualizationDescriptor {
   QString       default_anchor_id;
   DockPlacement default_placement = DockPlacement::Tab;
   bool          default_enabled   = true;
+  bool          show_in_view_menu = true;
 };
 
 struct VisualizationContentExpectation {

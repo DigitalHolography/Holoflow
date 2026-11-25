@@ -10,6 +10,7 @@ nav:
   - Applications:
     - Overview: applications/index.md
     - Doppler Holography: applications/doppler-holography.md
+    - Retinal LSCI: applications/retinal-lsci.md
     - Doppler OCT: applications/doppler-oct.md
     - Wavefront Analysis: applications/wavefront-analysis.md
   - Learn:
@@ -33,16 +34,18 @@ nav:
       - Runtime Internals:
         - holoflow/runtime-internals/index.md
         - Graph Compilation: holoflow/runtime-internals/graph-compilation.md
+        - Section-level CUDA Graphs: holoflow/runtime-internals/section-cuda-graphs.md
+        - CUDA Graph Contracts and Reference: holoflow/runtime-internals/section-cuda-graphs-reference.md
       - API Reference: holoflow/reference/index.md
     - Curaii: curaii/index.md
     - Holofile: holofile/index.md
+    - Holocam: holocam/index.md
   - Research: research/index.md
   - Reference:
     - Overview: reference/index.md
     - Holovibes Tasks:
       - Sources:
-        - Ametek s710 Euresys Coaxlink Octo: holovibes/tasks/sources/ametek_s710_euresys_coaxlink_octo.md
-        - Ametek s711 Euresys Coaxlink QSFP+: holovibes/tasks/sources/ametek_s711_euresys_coaxlink_qsfp+.md
+        - Camera: holovibes/tasks/sources/camera.md
         - Holofile: holovibes/tasks/sources/holofile.md
       - Sinks:
         - Display Tensor: holovibes/tasks/sinks/display_tensor.md
@@ -55,6 +58,7 @@ nav:
         - Convolution: holovibes/tasks/syncs/convolution.md
         - FFT Shift: holovibes/tasks/syncs/fft_shift.md
         - Filter 2D: holovibes/tasks/syncs/filter2d.md
+        - Spatial Contrast: holovibes/tasks/syncs/spatial_contrast.md
         - Fresnel Diffraction: holovibes/tasks/syncs/fresnel_diffraction.md
         - Memcpy: holovibes/tasks/syncs/memcpy.md
         - PCA: holovibes/tasks/syncs/pca.md

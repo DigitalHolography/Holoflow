@@ -226,6 +226,15 @@ public:
       : settings_(std::move(settings)), kernel_settings_(make_kernel_settings(settings_)),
         stream_(stream) {}
 
+  bool supports_cuda_graph() const noexcept override {
+    return settings_.output == holoflow::core::MemLoc::Device;
+  }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, nullptr, nullptr, nullptr};
+    (void)execute(execution);
+  }
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     const auto *in_data  = reinterpret_cast<const float *>(ctx.inputs[0].data());
     auto       *out_data = reinterpret_cast<float *>(ctx.outputs[0].data());
@@ -344,10 +353,12 @@ ZernikePhaseFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                             std::span<const holoflow::core::TDesc>     input_descs,
                             const nlohmann::json                      &jsettings,
                             const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
   (void)infer(input_descs, jsettings);
 
   auto *old_zernike_phase = dynamic_cast<ZernikePhase *>(old_task.get());
   if (old_zernike_phase == nullptr) {
+    ctx.invalidate_execution();
     return create(input_descs, jsettings, ctx);
   }
 
@@ -356,6 +367,8 @@ ZernikePhaseFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     old_zernike_phase->update_stream(ctx.stream);
     return old_task;
   }
+
+  ctx.invalidate_execution();
 
   return create(input_descs, jsettings, ctx);
 }

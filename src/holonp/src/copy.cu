@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "holonp/copy.hh"
+#include "utils/tensor_common.hh"
 
 #include <cstddef>
 #include <cstdint>
@@ -30,11 +31,6 @@ inline void check(bool cond, const std::string &msg) {
   if (!cond) {
     throw std::invalid_argument("Copy: " + msg);
   }
-}
-
-bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
-  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
-         a.mem_loc == b.mem_loc && a.offset == b.offset;
 }
 
 __global__ void copy_kernel(const std::byte *__restrict__ src, std::byte *__restrict__ dst,
@@ -76,6 +72,13 @@ public:
       : ndim_(ndim), total_elems_(total_elems), elem_size_(elem_size), stream_(stream),
         d_src_strides_(std::move(d_src_strides)), d_src_shape_(std::move(d_src_shape)),
         idesc_(std::move(idesc)) {}
+
+  bool supports_cuda_graph() const noexcept override { return true; }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, nullptr, nullptr, nullptr};
+    (void)execute(execution);
+  }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
@@ -158,18 +161,22 @@ CopyFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                     std::span<const holoflow::core::TDesc>     input_descs,
                     const nlohmann::json                      &jsettings,
                     const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
   (void)infer(input_descs, jsettings);
 
   auto *old_copy = dynamic_cast<Copy *>(old_task.get());
   if (old_copy == nullptr || input_descs.size() != 1) {
+    ctx.invalidate_execution();
     return create(input_descs, jsettings, ctx);
   }
 
   const auto &idesc = input_descs[0];
-  if (same_desc(idesc, old_copy->idesc())) {
+  if (utils::same_desc(idesc, old_copy->idesc())) {
     old_copy->update_stream(ctx.stream);
     return old_task;
   }
+
+  ctx.invalidate_execution();
 
   return create(input_descs, jsettings, ctx);
 }

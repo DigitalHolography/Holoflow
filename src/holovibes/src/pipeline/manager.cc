@@ -29,6 +29,8 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <mutex>
+#include <optional>
 #include <spdlog/fmt/ranges.h>
 #include <string>
 #include <string_view>
@@ -37,42 +39,70 @@
 #include "bug.hh"
 #include "graph_builder.hh"
 #include "holofile/holofile.hh"
+#include "holoflow/runtime/diagnostics.hh"
+#include "holoflow/runtime/tracing.hh"
+#include "holoflow/runtime/windows_crash_handler.hh"
 #include "holonp/abs.hh"
 #include "holonp/add.hh"
 #include "holonp/arange.hh"
 #include "holonp/argmax.hh"
+#include "holonp/argmin.hh"
 #include "holonp/asarray.hh"
 #include "holonp/ascontiguousarray.hh"
+#include "holonp/clip.hh"
 #include "holonp/concatenate.hh"
 #include "holonp/conj.hh"
+#include "holonp/convolve.hh"
 #include "holonp/copy.hh"
+#include "holonp/correlate.hh"
+#include "holonp/diff.hh"
 #include "holonp/divide.hh"
+#include "holonp/elementwise_minmax.hh"
 #include "holonp/empty.hh"
 #include "holonp/equal.hh"
+#include "holonp/exp.hh"
 #include "holonp/fft.hh"
 #include "holonp/fft2.hh"
 #include "holonp/fftshift.hh"
+#include "holonp/gradient.hh"
+#include "holonp/histogram.hh"
+#include "holonp/irfft.hh"
 #include "holonp/irfft2.hh"
+#include "holonp/lstsq.hh"
+#include "holonp/math_unary.hh"
+#include "holonp/matmul.hh"
 #include "holonp/max.hh"
 #include "holonp/mean.hh"
+#include "holonp/median.hh"
 #include "holonp/meshgrid.hh"
 #include "holonp/min.hh"
 #include "holonp/multiply.hh"
+#include "holonp/norm.hh"
+#include "holonp/percentile.hh"
+#include "holonp/pinv.hh"
+#include "holonp/quantile.hh"
 #include "holonp/reshape.hh"
 #include "holonp/rfft.hh"
 #include "holonp/rfft2.hh"
 #include "holonp/slice.hh"
+#include "holonp/square.hh"
+#include "holonp/std.hh"
 #include "holonp/subtract.hh"
+#include "holonp/sum.hh"
+#include "holonp/svd.hh"
 #include "holonp/transpose.hh"
+#include "holonp/var.hh"
 #include "holonp/where.hh"
 #include "holonp/zeros.hh"
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
 #include "holotask/pipelines/mtd.hh"
+#include "holotask/asyncs/temporal_window.hh"
+#include "holotask/sinks/ffmpeg.hh"
 #include "holotask/sinks/holofile.hh"
-#include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
-#include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
+#include "holotask/sinks/npyfile.hh"
+#include "holotask/sources/camera.hh"
 #include "holotask/sources/fresnel_qin.hh"
 #include "holotask/sources/fresnel_qout.hh"
 #include "holotask/sources/holofile.hh"
@@ -93,8 +123,10 @@
 #include "holotask/syncs/pca.hh"
 #include "holotask/syncs/pct_clip.hh"
 #include "holotask/syncs/registration.hh"
+#include "holotask/syncs/resize.hh"
 #include "holotask/syncs/shack_hartmann_slopes.hh"
 #include "holotask/syncs/short_time_fresnel_diffraction.hh"
+#include "holotask/syncs/spatial_contrast.hh"
 #include "holotask/syncs/unfold2d.hh"
 #include "holotask/syncs/wrap2pi.hh"
 #include "holotask/syncs/zernike_defocus_z_prop.hh"
@@ -109,6 +141,7 @@
 #include "ui/widgets/auto_focus_widget.hh"
 #include "ui/widgets/tensor_display_widget.hh"
 #include "ui/widgets/zernike_history_widget.hh"
+#include <QPointer>
 
 using namespace holotask;
 using namespace holonp;
@@ -116,6 +149,45 @@ using namespace holonp;
 namespace holovibes::pipeline {
 
 namespace {
+
+using holoflow::runtime::tracing::ScopedTrace;
+
+// Declared before the manager lock so capture/export happens after the lock is released.
+class OperationTrace {
+public:
+  explicit OperationTrace(std::string operation)
+      : capture_(trace_path(operation)), total_("Pipeline " + operation) {
+    holoflow::runtime::tracing::set_thread_name("Pipeline Manager");
+  }
+  void set_outcome(holoflow::runtime::tracing::Outcome outcome) noexcept {
+    total_.set_outcome(outcome);
+  }
+
+private:
+  static std::filesystem::path trace_path(const std::string &operation) noexcept {
+    if (!holoflow::runtime::tracing::Session::available())
+      return {};
+    try {
+      const auto app_data = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+      if (app_data.isEmpty()) {
+        logger()->warn("Could not save lifecycle trace: no application data directory");
+        return {};
+      }
+      return std::filesystem::path(app_data.toStdString()) /
+             QCoreApplication::applicationVersion().toStdString() / "logs" /
+             ("pipeline_" + operation + "_trace.perfetto-trace");
+    } catch (const std::exception &error) {
+      try {
+        logger()->warn("Could not prepare lifecycle trace: {}", error.what());
+      } catch (...) {
+      }
+    } catch (...) {
+    }
+    return {};
+  }
+  holoflow::runtime::tracing::Capture capture_;
+  ScopedTrace                         total_;
+};
 
 template <class F, class... Args>
 void reg_sync(holoflow::core::Registry &r, std::string_view name, Args &&...args) {
@@ -129,6 +201,12 @@ void reg_async(holoflow::core::Registry &r, std::string_view name, Args &&...arg
 
 } // namespace
 
+Manager::~Manager() {
+#if defined(_WIN32)
+  uninstall_windows_crash_handler();
+#endif
+}
+
 Manager::Manager(
     ui::AutoFocusWidget *autofocus_widget, ui::TensorDisplayWidget *xy_processed_widget,
     ui::TensorDisplayWidget *xz_processed_widget, ui::TensorDisplayWidget *yz_processed_widget,
@@ -136,6 +214,7 @@ Manager::Manager(
     ui::TensorDisplayWidget *processed_spectrum_widget,
     ui::TensorDisplayWidget *shack_hartmann_widget,
     ui::TensorDisplayWidget *shack_hartmann_xcorr_widget,
+    ui::TensorDisplayWidget *registration_xcorr_widget,
     ui::TensorDisplayWidget *zernike_phase_widget, ui::ZernikeHistoryWidget *zernike_history_widget)
     : autofocus_widget_(autofocus_widget), xy_processed_widget_(xy_processed_widget),
       xz_processed_widget_(xz_processed_widget), yz_processed_widget_(yz_processed_widget),
@@ -143,7 +222,9 @@ Manager::Manager(
       processed_spectrum_widget_(processed_spectrum_widget),
       shack_hartmann_widget_(shack_hartmann_widget),
       shack_hartmann_xcorr_widget_(shack_hartmann_xcorr_widget),
-      zernike_phase_widget_(zernike_phase_widget), zernike_history_widget_(zernike_history_widget) {
+      registration_xcorr_widget_(registration_xcorr_widget),
+      zernike_phase_widget_(zernike_phase_widget), zernike_history_widget_(zernike_history_widget),
+      history_dispatchers_(std::make_shared<ui::SignalHistoryDispatcherProvider>()) {
 
   register_components();
   focus_playback_timer_ = new QTimer(this);
@@ -165,27 +246,41 @@ Manager::Manager(
 }
 
 void Manager::register_components() {
-  // clang-format off
   reg_async<asyncs::BatchQueueFactory>(registry_, "BatchQueue");
   reg_async<asyncs::DualReaderBatchQueueFactory>(registry_, "DualReaderBatchQueue");
   reg_async<asyncs::SlidingAverageFactory>(registry_, "SlidingAverage");
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXY", xy_processed_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXZ", xz_processed_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorYZ", yz_processed_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXYRaw", xy_raw_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayRawSpectrum", raw_spectrum_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayProcessedSpectrum", processed_spectrum_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmann", shack_hartmann_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmannXcorr", shack_hartmann_xcorr_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorZernikePhase", zernike_phase_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayZernikeCoefficientsFactory>(registry_, "DisplayZernikeCoefficients", autofocus_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplaySignalHistoryFactory>(registry_, "DisplaySignalHistory", zernike_history_widget_);
+  reg_async<asyncs::TemporalWindowFactory>(registry_, "TemporalWindow");
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXY",
+                                                          xy_processed_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXZ",
+                                                          xz_processed_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorYZ",
+                                                          yz_processed_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXYRaw",
+                                                          xy_raw_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayRawSpectrum",
+                                                          raw_spectrum_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayProcessedSpectrum",
+                                                          processed_spectrum_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmann",
+                                                          shack_hartmann_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(
+      registry_, "DisplayTensorShackHartmannXcorr", shack_hartmann_xcorr_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(
+      registry_, "DisplayTensorRegistrationXcorr", registration_xcorr_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorZernikePhase",
+                                                          zernike_phase_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayZernikeCoefficientsFactory>(
+      registry_, "DisplayZernikeCoefficients", autofocus_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplaySignalHistoryFactory>(registry_, "DisplaySignalHistory",
+                                                                 history_dispatchers_);
   reg_sync<sinks::HolofileFactory>(registry_, "HolofileWriter");
+  reg_sync<sinks::NpyfileFactory>(registry_, "NpyfileWriter");
+  reg_sync<sinks::FfmpegFactory>(registry_, "FfmpegWriter");
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
   reg_sync<sources::PgmSequenceFactory>(registry_, "PgmSequence");
   holotask::pipelines::register_mtd_tasks(registry_);
-  reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_, "AmetekS710EuresysCoaxlinkOcto");
-  reg_sync<sources::AmetekS711EuresysCoaxlinkQSFPFactory>(registry_, "AmetekS711EuresysCoaxlinkQSFP+");
+  reg_sync<sources::CameraFactory>(registry_, "Camera");
   reg_sync<sources::FresnelQinFactory>(registry_, "FresnelQin");
   reg_sync<sources::FresnelQoutFactory>(registry_, "FresnelQout");
   reg_sync<syncs::AngularSpectrumFactory>(registry_, "AngularSpectrum");
@@ -200,51 +295,86 @@ void Manager::register_components() {
   reg_sync<syncs::ConvolutionFactory>(registry_, "Convolution");
   reg_sync<syncs::FlatfieldFactory>(registry_, "Flatfield");
   reg_sync<syncs::Filter2DFactory>(registry_, "Filter2D");
+  reg_sync<syncs::SpatialContrastFactory>(registry_, "SpatialContrast");
   reg_sync<syncs::RegistrationFactory>(registry_, "Registration");
+  reg_sync<syncs::ResizeFactory>(registry_, "Resize");
   reg_sync<syncs::ShortTimeFresnelDiffractionFactory>(registry_, "ShortTimeFresnelDiffraction");
   reg_sync<syncs::Unfold2DFactory>(registry_, "Unfold2D");
   reg_sync<syncs::Wrap2PiFactory>(registry_, "Wrap2Pi");
   reg_sync<syncs::ShackHartmannSlopesFactory>(registry_, "ShackHartmannSlopes");
-  reg_sync<syncs::ZernikeDefocusZPropFactory>(registry_, "ZernikeDefocusZProp");
+  reg_async<syncs::ZernikeDefocusZPropFactory>(registry_, "ZernikeDefocusZProp");
   reg_sync<syncs::ZernikeFromSlopesFactory>(registry_, "ZernikeFromSlopes");
   reg_sync<syncs::ZernikePhaseFactory>(registry_, "ZernikePhase");
   reg_sync<ArangeFactory>(registry_, "Arange");
   reg_sync<AsArrayFactory>(registry_, "AsArray");
   reg_sync<AsContiguousArrayFactory>(registry_, "AsContiguousArray");
   reg_sync<CopyFactory>(registry_, "Copy");
+  reg_sync<SumFactory>(registry_, "Sum");
+  reg_sync<StdFactory>(registry_, "Std");
+  reg_sync<VarFactory>(registry_, "Var");
+  reg_sync<ArgminFactory>(registry_, "Argmin");
+  reg_sync<SqrtFactory>(registry_, "Sqrt");
+  reg_sync<RealFactory>(registry_, "Real");
+  reg_sync<ImagFactory>(registry_, "Imag");
+  reg_sync<AngleFactory>(registry_, "Angle");
+  reg_sync<LogFactory>(registry_, "Log");
+  reg_sync<IsfiniteFactory>(registry_, "Isfinite");
+  reg_sync<ClipFactory>(registry_, "Clip");
+  reg_sync<MaximumFactory>(registry_, "Maximum");
+  reg_sync<MinimumFactory>(registry_, "Minimum");
   reg_sync<EmptyFactory>(registry_, "Empty");
   reg_sync<ZerosFactory>(registry_, "Zeros");
   reg_sync<MeshgridFactory>(registry_, "Meshgrid");
   reg_sync<TransposeFactory>(registry_, "Transpose");
   reg_sync<SliceFactory>(registry_, "Slice");
   reg_sync<FFTFactory>(registry_, "FFT");
+  reg_sync<IFFTFactory>(registry_, "IFFT");
   reg_sync<FFT2Factory>(registry_, "FFT2");
+  reg_sync<IFFT2Factory>(registry_, "IFFT2");
   reg_sync<FFTShiftFactory>(registry_, "FFTShiftNp");
+  reg_sync<IFFTShiftFactory>(registry_, "IFFTShiftNp");
   reg_sync<AbsFactory>(registry_, "Abs");
   reg_sync<ConjFactory>(registry_, "Conj");
   reg_sync<MeanFactory>(registry_, "Mean");
   reg_sync<syncs::MeanAbsFactory>(registry_, "MeanAbs");
   reg_sync<MinFactory>(registry_, "Min");
   reg_sync<MaxFactory>(registry_, "Max");
+  reg_sync<MedianFactory>(registry_, "Median");
+  reg_sync<QuantileFactory>(registry_, "Quantile");
+  reg_sync<PercentileFactory>(registry_, "Percentile");
+  reg_sync<HistogramFactory>(registry_, "Histogram");
   reg_sync<syncs::NormalizeFactory>(registry_, "Normalize");
   reg_sync<ArgmaxFactory>(registry_, "Argmax");
   reg_sync<ConcatenateFactory>(registry_, "Concatenate");
+  reg_sync<ConvolveFactory>(registry_, "Convolve");
+  reg_sync<CorrelateFactory>(registry_, "Correlate");
   reg_sync<RFFTFactory>(registry_, "RFFT");
+  reg_sync<IRFFTFactory>(registry_, "IRFFT");
   reg_sync<RFFT2Factory>(registry_, "RFFT2");
   reg_sync<IRFFT2Factory>(registry_, "IRFFT2");
   reg_sync<syncs::CrossCorrelation2Factory>(registry_, "CrossCorrelation2");
   reg_sync<MultiplyFactory>(registry_, "Multiply");
+  reg_sync<MatmulFactory>(registry_, "Matmul");
+  reg_sync<NormFactory>(registry_, "Norm");
   reg_sync<SubtractFactory>(registry_, "Subtract");
   reg_sync<DivideFactory>(registry_, "Divide");
+  reg_sync<DiffFactory>(registry_, "Diff");
+  reg_sync<GradientFactory>(registry_, "Gradient");
+  reg_sync<SVDFactory>(registry_, "SVD");
+  reg_sync<PinvFactory>(registry_, "Pinv");
+  reg_sync<LstsqFactory>(registry_, "Lstsq");
   reg_sync<AddFactory>(registry_, "Add");
   reg_sync<EqualFactory>(registry_, "Equal");
+  reg_sync<ExpFactory>(registry_, "Exp");
   reg_sync<WhereFactory>(registry_, "Where");
   reg_sync<ReshapeFactory>(registry_, "Reshape");
   holotask::pipelines::register_focus_stack_tasks(registry_);
   // clang-format on
+  reg_sync<SquareFactory>(registry_, "Square");
 }
 
 void Manager::configure_zernike_history(bool start_run) {
+  ScopedTrace  trace("Configure History Widget");
   const double time_window_seconds = s_.signal_plot_time_window_seconds;
   const auto   indexes             = s_.autofocus_zernike_orders;
   if (!std::isfinite(time_window_seconds) || time_window_seconds <= 0.0) {
@@ -255,13 +385,35 @@ void Manager::configure_zernike_history(bool start_run) {
     throw std::invalid_argument("derived signal plot sample time must be positive and finite");
   }
 
-  auto configure = [widget = zernike_history_widget_, indexes, time_window_seconds, start_run]() {
-    if (start_run) {
-      widget->start_run(time_window_seconds, indexes);
-    } else {
-      widget->set_series(indexes);
-      widget->set_time_window_seconds(time_window_seconds);
-    }
+  if (start_run) {
+    ScopedTrace submission("Queue History Widget Reset");
+    if (history_dispatchers_->current)
+      history_dispatchers_->current->cancel();
+    const QPointer<ui::ZernikeHistoryWidget> widget    = zernike_history_widget_;
+    const auto                               requested = std::chrono::steady_clock::now();
+    history_dispatchers_->current = std::make_shared<ui::SignalHistoryDispatcher>(
+        zernike_history_widget_,
+        [widget, indexes, time_window_seconds, requested] {
+          ScopedTrace reset("Reset History Widget (GUI)");
+          logger()->debug("History reset GUI queue delay: {} ms",
+                          std::chrono::duration<double, std::milli>(
+                              std::chrono::steady_clock::now() - requested)
+                              .count());
+          if (widget)
+            widget->start_run(time_window_seconds, indexes);
+        },
+        [widget](std::vector<ui::ZernikeHistorySample> samples) {
+          ScopedTrace delivery("Deliver History Samples (GUI)");
+          if (widget)
+            widget->append_samples(std::move(samples));
+        });
+    HOLOVIBES_CHECK(history_dispatchers_->current->queue_reset());
+    return;
+  }
+
+  auto configure = [widget = zernike_history_widget_, indexes, time_window_seconds]() {
+    widget->set_series(indexes);
+    widget->set_time_window_seconds(time_window_seconds);
   };
 
   if (QThread::currentThread() == zernike_history_widget_->thread()) {
@@ -273,7 +425,10 @@ void Manager::configure_zernike_history(bool start_run) {
                                             Qt::BlockingQueuedConnection));
 }
 
-void Manager::stop_zernike_history() {
+void Manager::stop_zernike_history(bool cancel_run) {
+  ScopedTrace trace("Stop History Widget");
+  if (cancel_run && history_dispatchers_->current)
+    history_dispatchers_->current->cancel();
   auto stop = [widget = zernike_history_widget_]() { widget->stop_run(); };
   if (QThread::currentThread() == zernike_history_widget_->thread()) {
     stop();
@@ -285,7 +440,8 @@ void Manager::stop_zernike_history() {
 }
 
 void Manager::resume_zernike_history() {
-  auto resume = [widget = zernike_history_widget_]() { widget->resume_run(); };
+  ScopedTrace trace("Resume History Widget");
+  auto        resume = [widget = zernike_history_widget_]() { widget->resume_run(); };
   if (QThread::currentThread() == zernike_history_widget_->thread()) {
     resume();
     return;
@@ -296,12 +452,18 @@ void Manager::resume_zernike_history() {
 }
 
 void Manager::start_pipeline() {
+  OperationTrace operation("start");
   logger()->info("[Manager::start_pipeline] Starting pipeline...");
-  std::lock_guard lock(mtx_);
+  std::unique_lock lock(mtx_, std::defer_lock);
+  {
+    ScopedTrace scope("Acquire Manager Lock");
+    lock.lock();
+  }
 
   if (volume_active_ || (scheduler_ && scheduler_->is_running())) {
     const QString msg = "Pipeline is already running";
     logger()->error("[Manager::start_pipeline] {}", msg.toStdString());
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
     emit start_pipeline_failure(msg);
     return;
   }
@@ -316,6 +478,7 @@ void Manager::start_pipeline() {
       build_and_run();
     }
     logger()->info("[Manager::start_pipeline] Pipeline started successfully");
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Success);
     emit start_pipeline_success();
     if (volume_active_)
       present_volume();
@@ -326,16 +489,24 @@ void Manager::start_pipeline() {
       stop_zernike_history();
     const QString msg = QString("Failed to start pipeline: %1").arg(e.what());
     logger()->error("[Manager::start_pipeline] {}", msg.toStdString());
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
     emit start_pipeline_failure(msg);
   }
 }
 
 void Manager::stop_pipeline() {
+  OperationTrace operation("stop");
   logger()->info("[Manager::stop_pipeline] Stopping pipeline...");
-  std::lock_guard lock(mtx_);
+  std::unique_lock lock(mtx_, std::defer_lock);
+  {
+    ScopedTrace scope("Acquire Manager Lock");
+    lock.lock();
+  }
+
   focus_playback_timer_->stop();
   if (volume_active_) {
     volume_active_ = false;
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Success);
     emit stop_pipeline_success();
     return;
   }
@@ -343,60 +514,133 @@ void Manager::stop_pipeline() {
   if (!scheduler_ || !scheduler_->is_running()) {
     const QString msg = "Pipeline is not running";
     logger()->error("[Manager::stop_pipeline] {}", msg.toStdString());
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
     emit stop_pipeline_failure(msg);
     return;
   }
 
   try {
-    // Request an asynchronous stop and block until graph execution concludes safely.
-    scheduler_->request_stop();
-    scheduler_->wait();
+    // Retain the compiled graph and pending operations so the UI can resume without rebuilding.
+    {
+      ScopedTrace scope("Request Scheduler Pause");
+      scheduler_->request_stop();
+    }
+    {
+      ScopedTrace scope("Wait for Scheduler Pause");
+      scheduler_->wait();
+    }
+#if defined(_WIN32)
+    uninstall_windows_crash_handler();
+#endif
     stop_zernike_history();
 
-    stop_metrics_updates();
-    stop_event_polling();
-    raw_recording_active_ = false;
+    {
+      ScopedTrace scope("Stop Metrics Updates");
+      stop_metrics_updates();
+    }
+    {
+      ScopedTrace scope("Stop Event Polling");
+      stop_event_polling();
+    }
 
     logger()->info("[Manager::stop_pipeline] Pipeline stopped successfully");
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Success);
     emit stop_pipeline_success();
   } catch (const std::exception &e) {
     stop_zernike_history();
     const QString msg = QString("Failed to stop pipeline: %1").arg(e.what());
     logger()->error("[Manager::stop_pipeline] {}", msg.toStdString());
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
+    emit stop_pipeline_failure(msg);
+  }
+}
+
+void Manager::pause_pipeline() {
+  OperationTrace operation("pause");
+  logger()->info("[Manager::pause_pipeline] Stopping pipeline...");
+  std::unique_lock lock(mtx_, std::defer_lock);
+  {
+    ScopedTrace scope("Acquire Manager Lock");
+    lock.lock();
+  }
+
+  if (!scheduler_ || !scheduler_->is_running()) {
+    const QString msg = "Pipeline is not running";
+    logger()->error("[Manager::pause_pipeline] {}", msg.toStdString());
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
+    emit stop_pipeline_failure(msg);
+    return;
+  }
+
+  try {
+    // Retain the compiled graph and pending operations so the UI can resume without rebuilding.
+    {
+      ScopedTrace scope("Request Scheduler Pause");
+      scheduler_->request_pause();
+    }
+    {
+      ScopedTrace scope("Wait for Scheduler Pause");
+      scheduler_->wait();
+    }
+#if defined(_WIN32)
+    uninstall_windows_crash_handler();
+#endif
+    stop_zernike_history();
+
+    {
+      ScopedTrace scope("Stop Metrics Updates");
+      stop_metrics_updates();
+    }
+    {
+      ScopedTrace scope("Stop Event Polling");
+      stop_event_polling();
+    }
+
+    logger()->info("[Manager::pause_pipeline] Pipeline stopped successfully");
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Success);
+    emit stop_pipeline_success();
+  } catch (const std::exception &e) {
+    stop_zernike_history();
+    const QString msg = QString("Failed to pause pipeline: %1").arg(e.what());
+    logger()->error("[Manager::pause_pipeline] {}", msg.toStdString());
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
     emit stop_pipeline_failure(msg);
   }
 }
 
 void Manager::resume_pipeline() {
+  OperationTrace operation("resume");
   logger()->info("[Manager::resume_pipeline] Resuming pipeline...");
-  std::lock_guard lock(mtx_);
-  if (volume_active_) {
-    emit resume_pipeline_failure("Pipeline is already running");
-    return;
-  }
-  if (is_volume_mode() && volume_session()) {
-    try {
-      start_volume();
-      emit resume_pipeline_success();
-      if (volume_active_)
-        present_volume();
-    } catch (const std::exception &e) {
-      volume_active_ = false;
-      focus_playback_timer_->stop();
-      emit resume_pipeline_failure(QString::fromUtf8(e.what()));
-    }
-    return;
+  std::unique_lock lock(mtx_, std::defer_lock);
+  {
+    ScopedTrace scope("Acquire Manager Lock");
+    lock.lock();
   }
 
   if (volume_active_ || (scheduler_ && scheduler_->is_running())) {
     const QString msg = "Pipeline is already running";
     logger()->error("[Manager::resume_pipeline] {}", msg.toStdString());
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
     emit resume_pipeline_failure(msg);
+    return;
+  }
+  if (is_volume_mode() && volume_session()) {
+    try {
+      start_volume();
+      operation.set_outcome(holoflow::runtime::tracing::Outcome::Success);
+      emit resume_pipeline_success();
+      if (volume_active_)
+        present_volume();
+    } catch (const std::exception &e) {
+      operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
+      emit resume_pipeline_failure(QString("Failed to resume volume: %1").arg(e.what()));
+    }
     return;
   }
   if (!compiler_output_ || settings_dirty_) {
     const QString msg = "No unchanged compiled pipeline is available to resume";
     logger()->error("[Manager::resume_pipeline] {}", msg.toStdString());
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
     emit resume_pipeline_failure(msg);
     return;
   }
@@ -405,6 +649,7 @@ void Manager::resume_pipeline() {
     resume_zernike_history();
     run_compiled_graph();
     logger()->info("[Manager::resume_pipeline] Pipeline resumed successfully");
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Success);
     emit resume_pipeline_success();
     if (volume_active_)
       present_volume();
@@ -412,21 +657,46 @@ void Manager::resume_pipeline() {
     stop_zernike_history();
     const QString msg = QString("Failed to resume pipeline: %1").arg(e.what());
     logger()->error("[Manager::resume_pipeline] {}", msg.toStdString());
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
     emit resume_pipeline_failure(msg);
   }
 }
 
+void Manager::update_recording_path(const std::string &new_path) {
+  logger()->info("[Manager::update_recording_path] updating recording path: {}", new_path);
+  auto payload = nlohmann::json{
+      {"type", "update_recording_path"},
+      {"record_path", new_path},
+  };
+
+  if (!scheduler_->ui_try_send(get_record_node_name(), std::move(payload))) {
+    logger()->error("[Manager::update_recording_path] Failed to update recording path");
+    // TODO change event type
+    emit raw_record_started_failure("Failed to update recording path");
+    return;
+  }
+}
+
 void Manager::update_pipeline(const Settings &settings) {
+  OperationTrace operation("update");
   logger()->info("[Manager::update_pipeline] Updating pipeline settings...");
-  std::lock_guard lock(mtx_);
-  s_              = settings;
-  settings_dirty_ = true;
+  std::unique_lock lock(mtx_, std::defer_lock);
+  {
+    ScopedTrace scope("Acquire Manager Lock");
+    lock.lock();
+  }
+  {
+    ScopedTrace scope("Copy Pipeline Settings");
+    s_              = settings;
+    settings_dirty_ = true;
+  }
+
   if (volume_active_ || (is_volume_mode() && volume_session())) {
     const bool was_active = volume_active_;
     try {
-      if (is_volume_mode())
+      if (is_volume_mode()) {
         start_volume();
-      else {
+      } else {
         volume_active_ = false;
         mtd_session_.reset();
         focus_session_.reset();
@@ -437,13 +707,13 @@ void Manager::update_pipeline(const Settings &settings) {
         volume_active_ = false;
         focus_playback_timer_->stop();
       }
+      operation.set_outcome(holoflow::runtime::tracing::Outcome::Success);
       emit update_pipeline_success();
       if (is_volume_mode() && volume_session())
         present_volume();
     } catch (const std::exception &e) {
-      volume_active_ = false;
-      focus_playback_timer_->stop();
-      emit update_pipeline_failure(QString::fromUtf8(e.what()));
+      operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
+      emit update_pipeline_failure(QString("Failed to update volume: %1").arg(e.what()));
     }
     return;
   }
@@ -454,12 +724,14 @@ void Manager::update_pipeline(const Settings &settings) {
         configure_zernike_history(false);
       logger()->debug(
           "[Manager::update_pipeline] Pipeline is not running, updated parameters only.");
+      operation.set_outcome(holoflow::runtime::tracing::Outcome::Success);
       emit update_pipeline_success();
       if (volume_active_)
         present_volume();
     } catch (const std::exception &e) {
       const QString msg = QString("Failed to update pipeline: %1").arg(e.what());
       logger()->error("[Manager::update_pipeline] {}", msg.toStdString());
+      operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
       emit update_pipeline_failure(msg);
     }
     return;
@@ -467,8 +739,14 @@ void Manager::update_pipeline(const Settings &settings) {
 
   try {
     // Seamless restart mechanism
-    scheduler_->request_stop();
-    scheduler_->wait();
+    {
+      ScopedTrace scope("Request Scheduler Stop");
+      scheduler_->request_stop();
+    }
+    {
+      ScopedTrace scope("Wait for Scheduler Stop");
+      scheduler_->wait();
+    }
     raw_recording_active_ = false;
 
     if (is_volume_mode())
@@ -479,15 +757,39 @@ void Manager::update_pipeline(const Settings &settings) {
     }
 
     logger()->info("[Manager::update_pipeline] Pipeline updated successfully");
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Success);
     emit update_pipeline_success();
     if (volume_active_)
       present_volume();
   } catch (const std::exception &e) {
-    stop_zernike_history();
+    stop_zernike_history(true);
+    settings_dirty_ = true;
+    if (compiler_output_ != nullptr) {
+      try {
+        run_compiled_graph();
+        logger()->warn("[Manager::update_pipeline] New graph failed; resumed previous graph: {}",
+                       e.what());
+      } catch (const std::exception &resume_error) {
+        logger()->error("[Manager::update_pipeline] Failed to resume previous graph: {}",
+                        resume_error.what());
+      }
+    }
+
     const QString msg = QString("Failed to update pipeline: %1").arg(e.what());
     logger()->error("[Manager::update_pipeline] {}", msg.toStdString());
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
     emit update_pipeline_failure(msg);
   }
+}
+
+const std::string &Manager::get_record_node_name() {
+  static const std::string source = "source_0";
+  static const std::string record = "record";
+
+  if (s_.can_use_camera_record())
+    return source;
+
+  return record;
 }
 
 void Manager::start_raw_record(std::filesystem::path record_path) {
@@ -509,13 +811,22 @@ void Manager::start_raw_record(std::filesystem::path record_path) {
     return;
   }
 
+  if (s_.import_source == ImportSource::HOLOFILE) {
+    nlohmann::json restart_payload{{"type", "restart_playback"}};
+    if (!scheduler_->ui_try_send("source_0", std::move(restart_payload))) {
+      logger()->error("[Manager::start_raw_record] Failed to enqueue playback restart event");
+      emit raw_record_started_failure("Failed to enqueue playback restart event");
+      return;
+    }
+  }
+
   auto payload = nlohmann::json{
       {"type", "start_recording"},
       {"record_path", record_path},
   };
 
   // Send the recording event to the UI message queue inside the scheduler
-  if (!scheduler_->ui_try_send("record", std::move(payload))) {
+  if (!scheduler_->ui_try_send(get_record_node_name(), std::move(payload))) {
     logger()->error("[Manager::start_raw_record] Failed to enqueue start_recording event");
     emit raw_record_started_failure("Failed to enqueue start_recording event");
     return;
@@ -530,19 +841,19 @@ void Manager::start_raw_record(std::filesystem::path record_path) {
 void Manager::stop_raw_record() {
   std::lock_guard lock(mtx_);
   if (!scheduler_ || !scheduler_->is_running()) {
-    emit raw_record_stopped_failure("Pipeline is not running");
+    emit raw_record_stopped_failure("Pipeline is not running", std::nullopt);
     return;
   }
 
   if (!raw_recording_active_) {
-    emit raw_record_stopped_failure("No active recording to stop");
+    emit raw_record_stopped_failure("No active recording to stop", std::nullopt);
     return;
   }
 
   nlohmann::json payload{{"type", "stop_recording"}};
-  if (!scheduler_->ui_try_send("record", std::move(payload))) {
+  if (!scheduler_->ui_try_send(get_record_node_name(), std::move(payload))) {
     logger()->error("[Manager::stop_raw_record] Failed to enqueue stop_recording event");
-    emit raw_record_stopped_failure("Failed to enqueue stop_recording event");
+    emit raw_record_stopped_failure("Failed to enqueue stop_recording event", std::nullopt);
     return;
   }
 
@@ -627,14 +938,26 @@ void Manager::poll_events() {
     if (!event.has_value())
       break;
 
-    logger()->info("[Manager::poll_events] Received event from node '{}': {}", event->node_id,
-                   event->data.dump());
+    // logger()->info("[Manager::poll_events] Received event from node '{}': {}", event->node_id,
+    //                event->data.dump());
 
     std::string type = event->data.value("type", "");
 
-    if (type == "recording_finished") {
-      std::string path_str    = event->data.value("path", "");
-      bool        should_emit = false;
+    if (type == "recording_update") {
+      size_t frame_recorded = event->data.value("frame_recorded", 0);
+      size_t writing_speed  = event->data.value("writing_speed", 0);
+      size_t id             = event->data.value("id", 0); // assume that the id exists and is valid
+      size_t elapsed_time   = event->data.value("elapsed_time", 0);
+      emit   update_record(id, frame_recorded, writing_speed, elapsed_time);
+    } else if (type == "acquisition_update") {
+      size_t frame_acquired = event->data.value("frame_acquired", 0);
+      size_t id             = event->data.value("id", 0); // assume that the id exists and is valid
+      emit   update_acquisition(id, frame_acquired);
+    } else if (type == "record_flushing_finished") {
+      size_t id = event->data.value("id", 0); // assume that the id exists and is valid
+      emit   raw_record_flushing_finished(id);
+    } else if (type == "recording_finished") {
+      bool should_emit = false;
 
       {
         std::lock_guard lock(mtx_);
@@ -645,97 +968,126 @@ void Manager::poll_events() {
       }
 
       if (should_emit) {
-        logger()->info("[Manager::poll_events] Recording finished successfully at {}", path_str);
+        logger()->info("[Manager::poll_events] Recording finished successfully");
         emit raw_record_stopped_success();
       }
     } else if (type == "recording_failed") {
       const std::string message =
           event->data.value("message", std::string{"Recording failed for an unknown reason"});
+      size_t            id = event->data.value("id", 0); // assume that the id exists and is valid
       const std::string path_str = event->data.value("path", std::string{});
-      bool              should_emit{false};
 
       {
         std::lock_guard lock(mtx_);
         if (raw_recording_active_) {
           raw_recording_active_ = false;
-          should_emit           = true;
         }
       }
 
-      logger()->error("[Manager::poll_events] Recording failed at '{}': {}", path_str, message);
+      logger()->error("[Manager::poll_events] Recording {} at {} failed: {}", id, path_str, message);
 
-      if (should_emit) {
-        emit raw_record_stopped_failure(QString::fromStdString(message));
-      }
+      emit raw_record_stopped_failure(QString::fromStdString(message), id);
     }
   }
 }
 
 // --- Graph Building & Execution ---
 void Manager::build_and_run() {
+  ScopedTrace trace("Build and Run Pipeline");
   using CompilerConfig = holoflow::runtime::Compiler::Config;
   using Compiler       = holoflow::runtime::Compiler;
 
-  build_graph_spec();
-
   std::filesystem::path log_root;
-  const auto app_data_dir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
-  if (!app_data_dir.isEmpty()) {
-    log_root = std::filesystem::path(app_data_dir.toStdString()) /
-               QCoreApplication::applicationVersion().toStdString() / "logs";
-
-    std::error_code log_ec;
-    std::filesystem::create_directories(log_root, log_ec);
-    if (log_ec) {
-      logger()->warn("[Manager::build_and_run] Failed to create log directory '{}': {}",
-                     log_root.string(), log_ec.message());
-      log_root.clear();
+  log_root_.clear();
+  {
+    ScopedTrace resolution("Resolve Pipeline Log Path");
+    const auto  app_data_dir =
+        QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+    if (!app_data_dir.isEmpty()) {
+      log_root = std::filesystem::path(app_data_dir.toStdString()) /
+                 QCoreApplication::applicationVersion().toStdString() / "logs";
+      std::error_code log_ec;
+      std::filesystem::create_directories(log_root, log_ec);
+      if (log_ec) {
+        logger()->warn("[Manager::build_and_run] Failed to create log directory '{}': {}",
+                       log_root.string(), log_ec.message());
+        log_root.clear();
+      }
+    } else {
+      logger()->warn(
+          "[Manager::build_and_run] No writable application data directory is available");
     }
-  } else {
-    logger()->warn("[Manager::build_and_run] No writable application data directory is available");
   }
 
-  // TODO: What should be done about this verbose logging?
-  // if (dump_debug_graphs_) {
-  //   dump_graph_logs(log_root);
-  // }
+  log_root_ = log_root;
+
+  // Previous failure graphs must not be mistaken for this attempt's diagnostics.
+  if (dump_runtime_failure_graphs_ && !log_root_.empty()) {
+    std::error_code remove_ec;
+    std::filesystem::remove(log_root_ / "graph_build_failure.dot", remove_ec);
+    std::filesystem::remove(log_root_ / "compilation_failure.dot", remove_ec);
+    std::filesystem::remove(log_root_ / "runtime_failure.dot", remove_ec);
+  }
+
+  // Prepare the log directory before graph construction can write a failure graph.
+  build_graph_spec(log_root);
 
   CompilerConfig config;
-  config.log_dir             = log_root;
-  config.dump_dot_on_failure = dump_debug_graphs_;
-  config.verbose_tracing     = dump_debug_graphs_;
+  {
+    ScopedTrace preparation("Prepare Compiler Configuration");
+    {
+      ScopedTrace assignment("Assign Compiler Configuration", "detail");
+      config.log_dir             = log_root;
+      config.dump_dot_on_failure = dump_debug_graphs_ || dump_runtime_failure_graphs_;
+      config.verbose_tracing     = dump_debug_graphs_ || dump_runtime_failure_graphs_;
+    }
+    {
+      ScopedTrace environment("Read CUDA Graph Limit", "detail");
+      const auto  graph_limit = qEnvironmentVariable("HOLOFLOW_MAX_SECTION_CUDA_GRAPHS");
+      if (!graph_limit.isEmpty()) {
+        bool       valid = false;
+        const auto limit = graph_limit.toULongLong(&valid);
+        if (!valid || graph_limit.trimmed().startsWith('-') ||
+            limit > (std::numeric_limits<size_t>::max)()) {
+          throw std::invalid_argument(
+              "HOLOFLOW_MAX_SECTION_CUDA_GRAPHS must be a nonnegative integer");
+        }
+        config.max_section_cuda_graphs = static_cast<size_t>(limit);
+      }
+    }
+  }
 
+  // The scheduler references the previous compilation; stop it before replacing the graph.
+  scheduler_.reset();
   auto     prev_output = std::move(compiler_output_);
   Compiler compiler(registry_, config);
-  compiler_output_ = compiler.compile(spec_, std::move(prev_output));
-
-  if (compiler_output_) {
-    using namespace std::chrono;
-
-    // Write original GraphSpec
-    const std::filesystem::path log_dir =
-        QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation).toStdString() + "/" +
-        QCoreApplication::applicationVersion().toStdString() + "/logs";
-
-    const auto dot_path = log_dir / "compiled.dot";
-
-    std::ofstream(dot_path) << holoflow::runtime::to_dot(
-        *compiler_output_, graph_compiled_dump_prefs_, "compiled_pipeline");
+  {
+    ScopedTrace scope("Compile Pipeline");
+    auto        replacement = compiler.compile(spec_, std::move(prev_output));
+    compiler_output_        = std::move(replacement);
+  }
+  if (compiler_output_ && !log_root_.empty()) {
+    ScopedTrace dump("Dump Compiled Graph");
+    holoflow::runtime::dump_compiled_graph_async(log_root_ / "compiled.dot", *compiler_output_,
+                                                 graph_compiled_dump_prefs_, "compiled_pipeline");
   }
 
   run_compiled_graph();
 }
 
 void Manager::run_compiled_graph() {
+  ScopedTrace trace("Run Compiled Graph");
   using Scheduler = holoflow::runtime::Scheduler;
 
   HOLOVIBES_CHECK(compiler_output_ != nullptr, "Compiled pipeline is not available");
-  stop_metrics_updates();
-  stop_event_polling();
-
-  // A fresh scheduler runtime avoids retaining cancelled queue acquisitions while the compiled
-  // graph, task objects, source cursor, and allocated resources remain intact across a pause.
-  scheduler_.reset();
+  {
+    ScopedTrace scope("Stop Metrics Updates");
+    stop_metrics_updates();
+  }
+  {
+    ScopedTrace scope("Stop Event Polling");
+    stop_event_polling();
+  }
 
   auto &graph     = compiler_output_->graph;
   auto &sections  = compiler_output_->sections;
@@ -745,50 +1097,196 @@ void Manager::run_compiled_graph() {
                                     ? std::chrono::milliseconds{metrics_timer_->interval()}
                                     : std::chrono::milliseconds{1000};
 
-  scheduler_            = std::make_unique<Scheduler>(graph, sections, resources, metrics_interval);
-  raw_recording_active_ = false;
+  const Scheduler::FailureCallback failure_callback = [this](std::string_view thread_name,
+                                                             std::string_view node_name,
+                                                             std::string_view error_message) {
+    if (!dump_runtime_failure_graphs_ || !compiler_output_ || log_root_.empty()) {
+      return;
+    }
 
-  scheduler_->start();
-  start_metrics_updates();
-  poll_metrics();
-  start_event_polling();
+    const auto    failure_path = log_root_ / "runtime_failure.dot";
+    std::ofstream failure_file(failure_path);
+    if (!failure_file.is_open()) {
+      logger()->error("[Manager::run_compiled_graph] Failed to write runtime failure graph to {}",
+                      failure_path.string());
+      return;
+    }
+
+    const auto context = std::format("Thread: {}\nNode: {}\nError: {}", thread_name,
+                                     node_name.empty() ? "<unknown>" : node_name, error_message);
+    auto       failure_prefs     = graph_compiled_dump_prefs_;
+    failure_prefs.dump_node_name = true;
+    failure_prefs.dump_node_kind = true;
+    failure_file << holoflow::runtime::to_dot(*compiler_output_, failure_prefs, "runtime_failure",
+                                              node_name, context,
+                                              holoflow::runtime::GraphFailureKind::Runtime);
+    logger()->critical("[Manager::run_compiled_graph] Runtime failure graph saved to {}",
+                       failure_path.string());
+  };
+
+  {
+    ScopedTrace scope("Create Scheduler");
+    if (!scheduler_) {
+      raw_recording_active_ = false;
+      scheduler_ = std::make_unique<Scheduler>(graph, sections, resources, metrics_interval,
+                                               failure_callback);
+    }
+  }
+#if defined(_WIN32)
+  if (dump_runtime_failure_graphs_) {
+    install_windows_crash_handler();
+  } else {
+    uninstall_windows_crash_handler();
+  }
+#endif
+
+  {
+    ScopedTrace scope("Start Scheduler");
+    scheduler_->start();
+  }
+  {
+    ScopedTrace scope("Start Metrics Updates");
+    start_metrics_updates();
+  }
+  {
+    ScopedTrace scope("Poll Initial Metrics");
+    poll_metrics();
+  }
+  {
+    ScopedTrace scope("Start Event Polling");
+    start_event_polling();
+  }
 }
 
+#if defined(_WIN32)
+void Manager::install_windows_crash_handler() {
+  holoflow::runtime::WindowsCrashHandler::install(
+      [this](unsigned long exception_code) { dump_windows_crash_graph(exception_code); });
+}
+
+void Manager::uninstall_windows_crash_handler() {
+  holoflow::runtime::WindowsCrashHandler::uninstall();
+}
+
+void Manager::dump_windows_crash_graph(unsigned long exception_code) noexcept {
+  try {
+    if (!dump_runtime_failure_graphs_ || !compiler_output_ || log_root_.empty()) {
+      return;
+    }
+
+    const auto node_name = scheduler_ ? scheduler_->current_node_name() : std::string_view{};
+    const auto context   = std::format("Windows exception: 0x{:08X}\\nNode: {}", exception_code,
+                                       node_name.empty() ? "<unknown>" : node_name);
+
+    auto failure_prefs           = graph_compiled_dump_prefs_;
+    failure_prefs.dump_node_name = true;
+    failure_prefs.dump_node_kind = true;
+
+    const auto    failure_path = log_root_ / "runtime_failure.dot";
+    std::ofstream failure_file(failure_path, std::ios::trunc);
+    if (!failure_file.is_open()) {
+      return;
+    }
+
+    failure_file << holoflow::runtime::to_dot(*compiler_output_, failure_prefs, "runtime_failure",
+                                              node_name, context,
+                                              holoflow::runtime::GraphFailureKind::Runtime);
+    failure_file.flush();
+  } catch (...) {
+    // An unhandled-exception filter must never throw or prevent process termination.
+  }
+}
+#endif
+
 void Manager::dump_graph_logs(const std::filesystem::path &log_dir) {
-  // Write original GraphSpec
-  const auto json_path = log_dir / "pipeline.json";
-  const auto dot_path  = log_dir / "pipeline.dot";
-
-  std::ofstream(dot_path) << holoflow::core::to_dot(spec_, graph_spec_dump_prefs_);
-  std::ofstream(json_path) << holoflow::core::to_json(spec_).dump(2);
-
-  logger()->info("[Manager::dump_graph_logs] Pre-compile pipeline graphs saved to {}",
+  ScopedTrace trace("Dump Pipeline Graph Logs");
+  if (log_dir.empty())
+    return;
+  holoflow::runtime::dump_pipeline_graph_async(log_dir, spec_, graph_spec_dump_prefs_);
+  ScopedTrace logging("Log Pipeline Graph Dump Submission", "detail");
+  logger()->info("[Manager::dump_graph_logs] Pre-compile pipeline graph dumps queued for {}",
                  log_dir.string());
 }
 
-void Manager::build_graph_spec() {
-  logger()->info("[Manager::build_graph_spec] Building graph spec...");
+void Manager::build_graph_spec(const std::filesystem::path &log_dir) {
+  ScopedTrace trace("Build Graph Spec");
+  {
+    ScopedTrace logging("Log Graph Spec Build Start", "detail");
+    logger()->info("[Manager::build_graph_spec] Building graph spec...");
+  }
   HOLOVIBES_CHECK(settings_dirty_, "Settings are not dirty, no need to rebuild graph spec");
 
   reset_graph_spec();
   guess_optimizations();
   guess_source_dims();
 
-  GraphBuilder builder{s_, registry_};
-  spec_ = builder.build();
+  std::optional<GraphBuilder> builder;
+  try {
+    {
+      ScopedTrace construction("Create Graph Builder", "detail");
+      builder.emplace(s_, registry_);
+    }
+    {
+      ScopedTrace scope("Build Graph Nodes");
+      spec_ = builder->build();
+    }
+  } catch (const std::exception &e) {
+    std::string diagnostic_status;
+    if (!dump_runtime_failure_graphs_) {
+      diagnostic_status = "Failure graph diagnostics are disabled in Preferences.";
+    } else if (log_dir.empty()) {
+      diagnostic_status = "Failure graph was not saved because the application log folder "
+                          "could not be created.";
+    } else if (!builder.has_value()) {
+      diagnostic_status = "Graph construction failed before a partial graph was available.";
+    } else {
+      const auto dot = builder->failure_graph_dot(graph_spec_dump_prefs_);
+      if (dot.empty()) {
+        diagnostic_status = "No task-inference failure node was available for a graph.";
+      } else {
+        const auto    failure_path = log_dir / "graph_build_failure.dot";
+        std::ofstream failure_file(failure_path, std::ios::trunc);
+        if (failure_file.is_open()) {
+          failure_file.write(dot.data(), static_cast<std::streamsize>(dot.size()));
+          failure_file.flush();
+        }
+        if (failure_file.good()) {
+          emit failure_graph_ready(
+              QString::fromUtf8(dot.data(), static_cast<qsizetype>(dot.size())));
+          diagnostic_status = std::format("Graph construction failure: {}", failure_path.string());
+          logger()->error("[Manager::build_graph_spec] Failure graph saved to {}",
+                          failure_path.string());
+        } else {
+          diagnostic_status =
+              std::format("Failed to write graph construction failure: {}", failure_path.string());
+        }
+      }
+    }
+    throw std::runtime_error(std::format("{}\n{}", e.what(), diagnostic_status));
+  }
+
+  {
+    ScopedTrace destruction("Destroy Graph Builder", "detail");
+    builder.reset();
+  }
 
   settings_dirty_ = false;
-  logger()->debug("[Manager::build_graph_spec] Graph spec built successfully");
-  dump_graph_logs(
-      QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation).toStdString() + "/" +
-      QCoreApplication::applicationVersion().toStdString() + "/logs");
+  {
+    ScopedTrace logging("Log Graph Spec Build Completion", "detail");
+    logger()->debug("[Manager::build_graph_spec] Graph spec built successfully");
+  }
+  dump_graph_logs(log_dir);
 }
 
-void Manager::reset_graph_spec() { spec_ = holoflow::core::GraphSpec{}; }
+void Manager::reset_graph_spec() {
+  ScopedTrace trace("Reset Graph Spec");
+  spec_ = holoflow::core::GraphSpec{};
+}
 
 void Manager::guess_optimizations() {
-  bool load_in_gpu     = (s_.load_method == LoadMethod::LOAD_IN_GPU);
-  bool stride_multiple = (s_.time_stride % s_.time_window == 0);
+  ScopedTrace trace("Guess Optimizations");
+  bool        load_in_gpu     = (s_.load_method == LoadMethod::LOAD_IN_GPU);
+  bool        stride_multiple = (s_.time_stride % s_.time_window == 0);
 
   opti_cpu_stride_ = stride_multiple && !load_in_gpu;
   opti_gpu_stride_ = (stride_multiple && load_in_gpu) || opti_cpu_stride_;
@@ -798,6 +1296,7 @@ void Manager::guess_optimizations() {
 }
 
 void Manager::guess_source_dims() {
+  ScopedTrace trace("Read Source Metadata");
   if (s_.import_source == ImportSource::HOLOFILE) {
     auto header = holofile::Reader(s_.load_path.string()).header();
     src_width_  = header.frame_width;
@@ -807,7 +1306,8 @@ void Manager::guess_source_dims() {
 
   // Refactored slightly to prevent repetition
   if (s_.import_source == ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO ||
-      s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP) {
+      s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP ||
+      s_.import_source == ImportSource::AMETEK_S991_EURESYS_COAXLINK_QSFP) {
 
     std::ifstream cfg_file(s_.camera_config_path);
     if (!cfg_file.is_open()) {
@@ -815,9 +1315,15 @@ void Manager::guess_source_dims() {
           std::format("Could not open camera config file: {}", s_.camera_config_path.string()));
     }
 
-    auto        full_cfg = nlohmann::json::parse(cfg_file);
-    std::string key =
-        (s_.import_source == ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO) ? "s710" : "s711";
+    auto full_cfg = nlohmann::json::parse(cfg_file);
+
+    static const std::map<ImportSource, std::string> source_key_map = {
+        {ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO, "s710"},
+        {ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP, "s711"},
+        {ImportSource::AMETEK_S991_EURESYS_COAXLINK_QSFP, "s991"},
+    };
+
+    std::string key = source_key_map.at(s_.import_source);
 
     auto cfg    = full_cfg.at(key);
     src_width_  = cfg.at("Width").get<int>();

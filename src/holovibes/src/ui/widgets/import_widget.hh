@@ -43,6 +43,7 @@ public:
   QString            get_file_path() const;
   std::optional<int> get_fps_limit() const;
   double             get_sampling_frequency_hz() const;
+  double             get_pixel_space_size() const;
   int                get_start_index() const;
   int                get_end_index() const;
   QString            get_load_method() const;
@@ -83,12 +84,15 @@ public:
   QPushButton    *stop_button();
   QSpinBox       *fps_spin();
   QDoubleSpinBox *sampling_frequency_spin();
+  QDoubleSpinBox *pixel_space_size_spin();
   QSpinBox       *start_index_spin();
   QSpinBox       *end_index_spin();
   QComboBox      *load_method_combo();
   QCheckBox      *cam_check();
   QComboBox      *camera_combo();
   QComboBox      *camera_config_combo();
+
+  bool is_source_valid();
 
 signals:
   void start_clicked();
@@ -108,7 +112,10 @@ private:
   QStringList load_available_camera_configs();
   void        update_sampling_frequency_from_camera_config();
 
+  void update_source();
+
   QDoubleSpinBox *sampling_frequency_spin_;
+  QDoubleSpinBox *pixel_space_size_spin_;
 
   // File mode widgets
   QLineEdit   *file_line_edit_;
@@ -122,6 +129,7 @@ private:
   QCheckBox *cam_check_;
   QComboBox *camera_combo_;
   QComboBox *camera_config_combo_;
+
 
   // Control buttons
   QPushButton *start_button_;

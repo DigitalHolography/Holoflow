@@ -152,6 +152,10 @@ def _op_arange(inputs, settings):
 
 def _op_asarray(inputs, settings):
     value = float(settings["value"])
+    imag = float(settings.get("imag", 0.0))
+    dtype_name = settings.get("dtype", "F32")
+    if dtype_name == "CF32":
+        return [np.array([value + 1j * imag], dtype=np.complex64)]
     return [np.array([value], dtype=np.float32)]
 
 
@@ -194,6 +198,74 @@ def _op_multiply(inputs, settings):
     return [(a * b).astype(out_dtype)]
 
 
+def _op_matmul(inputs, settings):
+    return [np.matmul(inputs[0], inputs[1])]
+
+
+def _op_norm(inputs, settings):
+    x = inputs[0]
+    axis = settings.get("axis", None)
+    if axis is not None:
+        if isinstance(axis, list):
+            axis = tuple(int(a) for a in axis)
+        else:
+            axis = int(axis)
+    ord_value = settings.get("ord", 2.0)
+    if isinstance(ord_value, str):
+        ord_value = np.inf if ord_value in ("inf", "+inf") else -np.inf
+    return [np.linalg.norm(x, ord=ord_value, axis=axis,
+                           keepdims=bool(settings.get("keepdims", False))).astype(np.float32)]
+
+
+def _op_diff(inputs, settings):
+    x = inputs[0]
+    return [np.diff(x, n=int(settings.get("n", 1)), axis=int(settings.get("axis", -1)))]
+
+
+def _op_gradient(inputs, settings):
+    x = inputs[0]
+    axis = settings.get("axis", None)
+    if axis is not None:
+        axis = int(axis) if np.isscalar(axis) else tuple(int(a) for a in axis)
+    spacing = settings.get("spacing", None)
+    edge_order = int(settings.get("edge_order", 1))
+    if spacing is None:
+        result = np.gradient(x, axis=axis, edge_order=edge_order)
+    elif np.isscalar(spacing):
+        result = np.gradient(x, float(spacing), axis=axis, edge_order=edge_order)
+    else:
+        result = np.gradient(x, *[float(v) for v in spacing], axis=axis, edge_order=edge_order)
+    return list(result) if isinstance(result, tuple) else [result]
+
+
+def _op_convolve(inputs, settings):
+    return [np.convolve(inputs[0], inputs[1], mode=settings.get("mode", "full"))]
+
+
+def _op_correlate(inputs, settings):
+    return [np.correlate(inputs[0], inputs[1], mode=settings.get("mode", "full"))]
+
+
+def _op_svd(inputs, settings):
+    u, s, vh = np.linalg.svd(inputs[0], full_matrices=bool(settings.get("full_matrices", False)))
+    return [u.astype(np.float32), s.astype(np.float32), vh.astype(np.float32)]
+
+
+def _op_pinv(inputs, settings):
+    return [np.linalg.pinv(inputs[0], rcond=float(settings.get("rcond", 1e-6))).astype(np.float32)]
+
+
+def _op_lstsq(inputs, settings):
+    result = np.linalg.lstsq(inputs[0], inputs[1], rcond=float(settings.get("rcond", 1e-6)))
+    x, residuals, rank, singular_values = result
+    return [
+        np.asarray(x, dtype=np.float32),
+        np.asarray(residuals, dtype=np.float32),
+        np.asarray(rank, dtype=np.uint16),
+        np.asarray(singular_values, dtype=np.float32),
+    ]
+
+
 def _op_divide(inputs, settings):
     a, b = inputs[0], inputs[1]
     if a.dtype == b.dtype:
@@ -207,6 +279,14 @@ def _op_divide(inputs, settings):
 
 def _op_equal(inputs, settings):
     return [np.equal(inputs[0], inputs[1]).astype(np.uint8)]
+
+
+def _op_exp(inputs, settings):
+    return [np.exp(inputs[0])]
+
+
+def _op_square(inputs, settings):
+    return [np.square(inputs[0])]
 
 
 def _op_zeros(inputs, settings):
@@ -277,6 +357,67 @@ def _op_slice(inputs, settings):
             slices.append(slice(start, stop, step))
     return [x[tuple(slices)]]
 
+def _op_sum(inputs, settings):
+    x = inputs[0]
+    return [np.sum(x, axis=settings.get("axis"), keepdims=settings.get("keepdims", False)).astype(np.float32)]
+
+def _op_std(inputs, settings):
+    x = inputs[0]
+    return [np.std(x, axis=settings.get("axis"), keepdims=settings.get("keepdims", False)).astype(np.float32)]
+
+def _op_var(inputs, settings):
+    x = inputs[0]
+    return [np.var(x, axis=settings.get("axis"), keepdims=settings.get("keepdims", False)).astype(np.float32)]
+
+def _op_argmin(inputs, settings):
+    x = inputs[0]
+    result = np.array(np.argmin(x), dtype=np.uint16)
+    if settings.get("keepdims", False):
+        result = np.full([1] * x.ndim, result, dtype=np.uint16)
+    return [result]
+
+def _op_quantile(inputs, settings):
+    x = inputs[0]
+    settings = settings or {}
+    axis = settings.get("axis", None)
+    keepdims = settings.get("keepdims", False)
+    q = float(settings.get("q", 0.5))
+    return [np.quantile(x, q, axis=axis, keepdims=keepdims).astype(np.float32)]
+
+def _op_median(inputs, settings):
+    x = inputs[0]
+    settings = settings or {}
+    axis = settings.get("axis", None)
+    keepdims = settings.get("keepdims", False)
+    return [np.median(x, axis=axis, keepdims=keepdims).astype(np.float32)]
+
+def _op_percentile(inputs, settings):
+    x = inputs[0]
+    settings = settings or {}
+    axis = settings.get("axis", None)
+    keepdims = settings.get("keepdims", False)
+    q = float(settings.get("q", 50.0))
+    return [np.percentile(x, q, axis=axis, keepdims=keepdims).astype(np.float32)]
+
+def _op_histogram(inputs, settings):
+    settings = settings or {}
+    counts, edges = np.histogram(
+        inputs[0],
+        bins=int(settings.get("bins", 10)),
+        range=(float(settings.get("min", 0.0)), float(settings.get("max", 1.0))),
+    )
+    return [counts.astype(np.float32), edges.astype(np.float32)]
+
+def _op_sqrt(inputs, settings): return [np.sqrt(inputs[0]).astype(np.float32)]
+def _op_real(inputs, settings): return [np.real(inputs[0]).astype(np.float32)]
+def _op_imag(inputs, settings): return [np.imag(inputs[0]).astype(np.float32)]
+def _op_angle(inputs, settings): return [np.angle(inputs[0]).astype(np.float32)]
+def _op_log(inputs, settings): return [np.log(inputs[0]).astype(np.float32)]
+def _op_isfinite(inputs, settings): return [np.isfinite(inputs[0]).astype(np.float32)]
+def _op_clip(inputs, settings): return [np.clip(inputs[0], settings["min"], settings["max"]).astype(np.float32)]
+def _op_maximum(inputs, settings): return [np.maximum(inputs[0], inputs[1]).astype(np.float32)]
+def _op_minimum(inputs, settings): return [np.minimum(inputs[0], inputs[1]).astype(np.float32)]
+
 def _numpy_norm(settings):
     norm = settings.get("norm", "backward")
     if isinstance(norm, str):
@@ -298,6 +439,13 @@ def _op_fft(inputs, settings):
     return [np.fft.fft(x, axis=axis, norm=norm).astype(np.complex64)]
 
 
+def _op_ifft(inputs, settings):
+    x = inputs[0]
+    axis = int(settings.get("axis", -1))
+    norm = _numpy_norm(settings)
+    return [np.fft.ifft(x, axis=axis, norm=norm).astype(np.complex64)]
+
+
 def _op_fft2(inputs, settings):
     x = inputs[0]
     axes = settings.get("axes", None)
@@ -306,11 +454,28 @@ def _op_fft2(inputs, settings):
     return [np.fft.fft2(x, axes=axes, norm=norm).astype(np.complex64)]
 
 
+def _op_ifft2(inputs, settings):
+    x = inputs[0]
+    axes = settings.get("axes", None)
+    axes = None if axes is None else tuple(int(a) for a in axes)
+    norm = _numpy_norm(settings)
+    return [np.fft.ifft2(x, axes=axes, norm=norm).astype(np.complex64)]
+
+
 def _op_rfft(inputs, settings):
     x = inputs[0]
     axis = int(settings.get("axis", -1))
     norm = _numpy_norm(settings)
     return [np.fft.rfft(x, axis=axis, norm=norm).astype(np.complex64)]
+
+
+def _op_irfft(inputs, settings):
+    x = inputs[0]
+    axis = int(settings.get("axis", -1))
+    n = settings.get("n", None)
+    n = None if n is None or int(n) < 0 else int(n)
+    norm = _numpy_norm(settings)
+    return [np.fft.irfft(x, n=n, axis=axis, norm=norm).astype(np.float32)]
 
 
 def _op_rfft2(inputs, settings):
@@ -336,6 +501,13 @@ def _op_fftshift(inputs, settings):
     return [np.fft.fftshift(x, axes=axes)]
 
 
+def _op_ifftshift(inputs, settings):
+    x = inputs[0]
+    axes = settings.get("axes", None)
+    axes = None if axes is None else tuple(int(a) for a in axes)
+    return [np.fft.ifftshift(x, axes=axes)]
+
+
 _DISPATCH = {
     "abs":    _op_abs,
     "add":    _op_add,
@@ -348,8 +520,19 @@ _DISPATCH = {
     "copy": _op_copy,
     "subtract": _op_subtract,
     "multiply": _op_multiply,
+    "matmul": _op_matmul,
+    "norm": _op_norm,
+    "diff": _op_diff,
+    "gradient": _op_gradient,
+    "convolve": _op_convolve,
+    "correlate": _op_correlate,
+    "svd": _op_svd,
+    "pinv": _op_pinv,
+    "lstsq": _op_lstsq,
     "divide": _op_divide,
     "equal": _op_equal,
+    "exp": _op_exp,
+    "square": _op_square,
     "zeros": _op_zeros,
     "reshape": _op_reshape,
     "transpose": _op_transpose,
@@ -357,14 +540,35 @@ _DISPATCH = {
     "min": _op_min,
     "max": _op_max,
     "mean": _op_mean,
+    "sum": _op_sum,
+    "std": _op_std,
+    "var": _op_var,
+    "argmin": _op_argmin,
+    "quantile": _op_quantile,
+    "median": _op_median,
+    "percentile": _op_percentile,
+    "histogram": _op_histogram,
+    "sqrt": _op_sqrt,
+    "real": _op_real,
+    "imag": _op_imag,
+    "angle": _op_angle,
+    "log": _op_log,
+    "isfinite": _op_isfinite,
+    "clip": _op_clip,
+    "maximum": _op_maximum,
+    "minimum": _op_minimum,
     "meshgrid": _op_meshgrid,
     "slice": _op_slice,
     "fft": _op_fft,
+    "ifft": _op_ifft,
     "fft2": _op_fft2,
+    "ifft2": _op_ifft2,
     "rfft": _op_rfft,
+    "irfft": _op_irfft,
     "rfft2": _op_rfft2,
     "irfft2": _op_irfft2,
     "fftshift": _op_fftshift,
+    "ifftshift": _op_ifftshift,
 }
 
 

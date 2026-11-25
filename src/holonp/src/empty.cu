@@ -116,6 +116,8 @@ holoflow::core::InferResult EmptyFactory::infer(std::span<const holoflow::core::
       .owned_inputs  = {},
       .owned_outputs = {false},
       .kind          = holoflow::core::TaskKind::Sync,
+      // Explicit override: execute this allocation only once per scheduler start.
+      .constness     = holoflow::core::ConstInferenceState::Constant,
   };
 }
 

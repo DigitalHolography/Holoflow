@@ -16,6 +16,7 @@
 
 #include <bit>
 #include <cstdio>
+#include <stdexcept>
 #include <system_error>
 #include <utility>
 
@@ -241,6 +242,18 @@ Writer::Writer(const std::string &path, const Header &header, const Footer &foot
     : impl_(std::make_unique<Impl>()) {
   impl_->header = header;
   impl_->footer = footer;
+  try {
+    auto &pipeline_settings = impl_->footer.pipeline_settings;
+    auto &pixel_pitch = pipeline_settings.at("info").at("pixel_pitch");
+    auto &x = pixel_pitch.at("x");
+    auto &y = pixel_pitch.at("y");
+
+    x = x.get<float>() * 1e6;
+    y = y.get<float>() * 1e6;
+  }
+  catch(const nlohmann::json::exception& e) {
+    logger()->warn("[Writer::Writer] could not convert pixel pitch in micrometters: {}", e.what());
+  }
   // Open file
   FILE *fp = nullptr;
   if (fopen_s(&fp, path.c_str(), "wb") != 0 || !fp) {
@@ -272,8 +285,6 @@ Writer &Writer::operator=(Writer &&) noexcept = default;
 void Writer::write_footer() {
   std::string footer_json = impl_->footer.pipeline_settings.dump();
 
-  logger()->info("Writing Holofile footer with pipeline settings: {}", footer_json);
-
   if (_fseeki64(impl_->file.get(), 0, SEEK_END) != 0) {
     std::error_code ec(errno, std::generic_category());
     throw std::system_error(ec, "Failed to seek to end of file:");
@@ -296,6 +307,8 @@ void Writer::write_frames(const uint8_t *data, std::size_t frame_count) {
   size_t bytes_per_frame  = bits_per_frame / 8;
 
   size_t frames_written = fwrite(data, bytes_per_frame, frame_count, impl_->file.get());
+  // logger()->debug("[Writer::write_frames] frames_written: {}, bytes_per_frame: {}",
+  // frames_written, bytes_per_frame);
   impl_->frame_index += frames_written;
 
   if (ferror(impl_->file.get())) {
@@ -303,11 +316,11 @@ void Writer::write_frames(const uint8_t *data, std::size_t frame_count) {
     throw std::system_error(ec, "Failed to write frames:");
   }
   if (frames_written != frame_count) {
-    logger()->critical("Unrecoverable error: fwrite() failed to write the "
-                       "requested number of frames.");
-    std::exit(EXIT_FAILURE);
+    throw std::runtime_error("fwrite() failed to write the requested number of frames");
   }
 }
+
+void Writer::flush() { fflush(impl_->file.get()); }
 
 size_t Writer::tell() const { return impl_->frame_index; }
 

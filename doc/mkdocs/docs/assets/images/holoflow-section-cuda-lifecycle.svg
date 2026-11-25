@@ -1,0 +1,120 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" width="565pt" height="618pt" viewBox="0.00 0.00 565.00 618.00" role="img" aria-labelledby="figure-title figure-description">
+<desc id="figure-description">Pause retains the graph set; restart replans; updates invalidate incompatible captures.</desc><title id="figure-title">Graph-set lifecycle</title><g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(21.6 596.25)">
+<title>GraphSetLifecycle</title>
+<polygon fill="white" stroke="none" points="-21.6,21.6 -21.6,-596.25 543.37,-596.25 543.37,21.6 -21.6,21.6" />
+
+<g id="node1" class="node">
+<title>inspected</title>
+<path fill="#dcfce7" stroke="#64748b" d="M218.3,-574.65C218.3,-574.65 79.88,-574.65 79.88,-574.65 73.88,-574.65 67.88,-568.65 67.88,-562.65 67.88,-562.65 67.88,-543.75 67.88,-543.75 67.88,-537.75 73.88,-531.75 79.88,-531.75 79.88,-531.75 218.3,-531.75 218.3,-531.75 224.3,-531.75 230.3,-537.75 230.3,-543.75 230.3,-543.75 230.3,-562.65 230.3,-562.65 230.3,-568.65 224.3,-574.65 218.3,-574.65" />
+<text xml:space="preserve" text-anchor="middle" x="149.09" y="-556.05" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Inspected</text>
+<text xml:space="preserve" text-anchor="middle" x="149.09" y="-541.8" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">One-use compilation plan</text>
+</g>
+
+<g id="node2" class="node">
+<title>prepare</title>
+<path fill="#dbeafe" stroke="#64748b" d="M229.92,-482.25C229.92,-482.25 68.25,-482.25 68.25,-482.25 62.25,-482.25 56.25,-476.25 56.25,-470.25 56.25,-470.25 56.25,-437.1 56.25,-437.1 56.25,-431.1 62.25,-425.1 68.25,-425.1 68.25,-425.1 229.92,-425.1 229.92,-425.1 235.92,-425.1 241.92,-431.1 241.92,-437.1 241.92,-437.1 241.92,-470.25 241.92,-470.25 241.92,-476.25 235.92,-482.25 229.92,-482.25" />
+<text xml:space="preserve" text-anchor="middle" x="149.09" y="-463.65" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Prepare / refresh</text>
+<text xml:space="preserve" text-anchor="middle" x="149.09" y="-449.4" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Reuse matches; build missing</text>
+<text xml:space="preserve" text-anchor="middle" x="149.09" y="-435.15" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Discard obsolete variants</text>
+</g>
+
+<g id="edge1" class="edge">
+<title>inspected-&gt;prepare</title>
+<path fill="none" stroke="#64748b" d="M149.09,-531.52C149.09,-519.76 149.09,-504.69 149.09,-491.02" />
+<polygon fill="#64748b" stroke="#64748b" points="151.54,-491.24 149.09,-484.24 146.64,-491.24 151.54,-491.24" />
+<text xml:space="preserve" text-anchor="middle" x="169.71" y="-503.3" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#334155" style=";font-family:Arial,Helvetica,sans-serif">first start</text>
+</g>
+
+<g id="node3" class="node">
+<title>running</title>
+<path fill="#dbeafe" stroke="#64748b" d="M224.3,-375.6C224.3,-375.6 73.88,-375.6 73.88,-375.6 67.88,-375.6 61.88,-369.6 61.88,-363.6 61.88,-363.6 61.88,-344.7 61.88,-344.7 61.88,-338.7 67.88,-332.7 73.88,-332.7 73.88,-332.7 224.3,-332.7 224.3,-332.7 230.3,-332.7 236.3,-338.7 236.3,-344.7 236.3,-344.7 236.3,-363.6 236.3,-363.6 236.3,-369.6 230.3,-375.6 224.3,-375.6" />
+<text xml:space="preserve" text-anchor="middle" x="149.09" y="-357" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Running</text>
+<text xml:space="preserve" text-anchor="middle" x="149.09" y="-342.75" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Tuple lookup + graph replay</text>
+</g>
+
+<g id="edge2" class="edge">
+<title>prepare-&gt;running</title>
+<path fill="none" stroke="#64748b" d="M149.09,-424.73C149.09,-412.11 149.09,-397.19 149.09,-384.42" />
+<polygon fill="#64748b" stroke="#64748b" points="151.54,-384.48 149.09,-377.48 146.64,-384.48 151.54,-384.48" />
+<text xml:space="preserve" text-anchor="middle" x="162.59" y="-396.65" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#334155" style=";font-family:Arial,Helvetica,sans-serif">ready</text>
+</g>
+
+<g id="node4" class="node">
+<title>paused</title>
+<path fill="#fef3c7" stroke="#64748b" d="M148.17,-269.7C148.17,-269.7 12,-269.7 12,-269.7 6,-269.7 0,-263.7 0,-257.7 0,-257.7 0,-224.55 0,-224.55 0,-218.55 6,-212.55 12,-212.55 12,-212.55 148.17,-212.55 148.17,-212.55 154.17,-212.55 160.17,-218.55 160.17,-224.55 160.17,-224.55 160.17,-257.7 160.17,-257.7 160.17,-263.7 154.17,-269.7 148.17,-269.7" />
+<text xml:space="preserve" text-anchor="middle" x="80.09" y="-251.1" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Paused</text>
+<text xml:space="preserve" text-anchor="middle" x="80.09" y="-236.85" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Keep buffers, checkpoint,</text>
+<text xml:space="preserve" text-anchor="middle" x="80.09" y="-222.6" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">and graph set</text>
+</g>
+
+<g id="edge3" class="edge">
+<title>running-&gt;paused</title>
+<path fill="none" stroke="#64748b" d="M136.11,-332.27C126.46,-316.74 113.07,-295.19 101.8,-277.06" />
+<polygon fill="#64748b" stroke="#64748b" points="104.01,-275.98 98.23,-271.33 99.85,-278.57 104.01,-275.98" />
+<text xml:space="preserve" text-anchor="middle" x="155.55" y="-297.5" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#334155" style=";font-family:Arial,Helvetica,sans-serif">pause + wait</text>
+</g>
+
+<g id="node5" class="node">
+<title>stopped</title>
+<path fill="#dcfce7" stroke="#64748b" d="M225.42,-149.55C225.42,-149.55 72.75,-149.55 72.75,-149.55 66.75,-149.55 60.75,-143.55 60.75,-137.55 60.75,-137.55 60.75,-118.65 60.75,-118.65 60.75,-112.65 66.75,-106.65 72.75,-106.65 72.75,-106.65 225.42,-106.65 225.42,-106.65 231.42,-106.65 237.42,-112.65 237.42,-118.65 237.42,-118.65 237.42,-137.55 237.42,-137.55 237.42,-143.55 231.42,-149.55 225.42,-149.55" />
+<text xml:space="preserve" text-anchor="middle" x="149.09" y="-130.95" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Stopped / EOF</text>
+<text xml:space="preserve" text-anchor="middle" x="149.09" y="-116.7" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Drain work; reset checkpoint</text>
+</g>
+
+<g id="edge5" class="edge">
+<title>running-&gt;stopped</title>
+<path fill="none" stroke="#64748b" d="M179.66,-332.3C185.03,-327.19 189.9,-321.27 193.09,-314.7 221.63,-255.8 228,-226.27 199.09,-167.55 197.03,-163.37 194.28,-159.53 191.12,-156.01" />
+<polygon fill="#64748b" stroke="#64748b" points="192.84,-154.27 186.13,-151.11 189.4,-157.76 192.84,-154.27" />
+<text xml:space="preserve" text-anchor="middle" x="259.88" y="-237.43" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#334155" style=";font-family:Arial,Helvetica,sans-serif">stop / EOF + wait</text>
+</g>
+
+<g id="edge4" class="edge">
+<title>paused-&gt;running</title>
+<path fill="none" stroke="#64748b" d="M160.67,-260.62C173.47,-267.1 185.1,-275.86 193.09,-287.7 199.8,-297.65 198.05,-303.77 193.09,-314.7 191.2,-318.86 188.61,-322.74 185.64,-326.32" />
+<polygon fill="#64748b" stroke="#64748b" points="183.95,-324.53 180.96,-331.32 187.53,-327.88 183.95,-324.53" />
+<text xml:space="preserve" text-anchor="middle" x="233.49" y="-304.25" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#334155" style=";font-family:Arial,Helvetica,sans-serif">resume</text>
+<text xml:space="preserve" text-anchor="middle" x="233.49" y="-290.75" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#334155" style=";font-family:Arial,Helvetica,sans-serif">No preparation</text>
+</g>
+
+<g id="edge9" class="edge">
+<title>paused-&gt;stopped</title>
+<path fill="none" stroke="#64748b" d="M82.05,-212.13C84.14,-197.84 88.41,-180.74 97.09,-167.55 99.96,-163.18 103.51,-159.13 107.4,-155.42" />
+<polygon fill="#64748b" stroke="#64748b" points="108.93,-157.33 112.59,-150.88 105.71,-153.64 108.93,-157.33" />
+<text xml:space="preserve" text-anchor="middle" x="146.59" y="-184.1" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#334155" style=";font-family:Arial,Helvetica,sans-serif">stop</text>
+<text xml:space="preserve" text-anchor="middle" x="146.59" y="-170.6" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#334155" style=";font-family:Arial,Helvetica,sans-serif">Release held buffers</text>
+</g>
+
+<g id="edge7" class="edge">
+<title>stopped-&gt;inspected</title>
+<path fill="none" stroke="#64748b" d="M237.88,-142.13C259.59,-147.8 282.03,-155.92 301.09,-167.55 361.88,-204.64 381.9,-221.09 407.09,-287.7 448.97,-398.48 296.26,-487.04 207.84,-527.81" />
+<polygon fill="#64748b" stroke="#64748b" points="207.02,-525.5 201.66,-530.63 209.05,-529.96 207.02,-525.5" />
+<text xml:space="preserve" text-anchor="middle" x="467.77" y="-363.95" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#334155" style=";font-family:Arial,Helvetica,sans-serif">recompile</text>
+<text xml:space="preserve" text-anchor="middle" x="467.77" y="-350.45" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#334155" style=";font-family:Arial,Helvetica,sans-serif">Reuse compatible;</text>
+<text xml:space="preserve" text-anchor="middle" x="467.77" y="-336.95" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#334155" style=";font-family:Arial,Helvetica,sans-serif">invalidate incompatible</text>
+</g>
+
+<g id="edge6" class="edge">
+<title>stopped-&gt;prepare</title>
+<path fill="none" stroke="#64748b" d="M226.97,-149.99C258.27,-162.66 291.14,-182.4 309.09,-212.55 354.39,-288.66 260.8,-374.18 198.55,-419.8" />
+<polygon fill="#64748b" stroke="#64748b" points="197.34,-417.66 193.11,-423.74 200.22,-421.63 197.34,-417.66" />
+<text xml:space="preserve" text-anchor="middle" x="357.08" y="-304.25" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#334155" style=";font-family:Arial,Helvetica,sans-serif">restart</text>
+<text xml:space="preserve" text-anchor="middle" x="357.08" y="-290.75" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#334155" style=";font-family:Arial,Helvetica,sans-serif">Reinspect phases</text>
+</g>
+
+<g id="node6" class="node">
+<title>destroyed</title>
+<path fill="#f1f5f9" stroke="#64748b" d="M226.17,-57.15C226.17,-57.15 72,-57.15 72,-57.15 66,-57.15 60,-51.15 60,-45.15 60,-45.15 60,-12 60,-12 60,-6 66,0 72,0 72,0 226.17,0 226.17,0 232.17,0 238.17,-6 238.17,-12 238.17,-12 238.17,-45.15 238.17,-45.15 238.17,-51.15 232.17,-57.15 226.17,-57.15" />
+<text xml:space="preserve" text-anchor="middle" x="149.09" y="-38.55" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Destroyed</text>
+<text xml:space="preserve" text-anchor="middle" x="149.09" y="-24.3" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Executables released before</text>
+<text xml:space="preserve" text-anchor="middle" x="149.09" y="-10.05" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">tasks, streams, and buffers</text>
+</g>
+
+<g id="edge8" class="edge">
+<title>stopped-&gt;destroyed</title>
+<path fill="none" stroke="#64748b" d="M149.09,-106.42C149.09,-94.66 149.09,-79.59 149.09,-65.92" />
+<polygon fill="#64748b" stroke="#64748b" points="151.54,-66.14 149.09,-59.14 146.64,-66.14 151.54,-66.14" />
+<text xml:space="preserve" text-anchor="middle" x="191.84" y="-78.2" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#334155" style=";font-family:Arial,Helvetica,sans-serif">release resources</text>
+</g>
+</g>
+</svg>

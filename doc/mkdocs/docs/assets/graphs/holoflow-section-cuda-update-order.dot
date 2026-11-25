@@ -1,0 +1,12 @@
+digraph UpdateUnwind {
+  graph [rankdir=LR, bgcolor="white", pad=0.25, nodesep=0.3, ranksep=0.4,
+         label="An exception leaves update()", labelloc=t,
+         fontname="Helvetica", fontsize=14, fontcolor="#172033"];
+  node [shape=box, style="rounded,filled", color="#64748b", fontname="Helvetica",
+        fontsize=13, fontcolor="#172033", margin="0.15,0.12"];
+  edge [color="#64748b", arrowsize=0.7];
+  local [label="1. Destroy later locals\nA replacement owner\nunwinds first", fillcolor="#fef3c7"];
+  guard [label="2. Destroy the guard\nInvalidate dependent\nexecutables", fillcolor="#dbeafe"];
+  parameter [label="3. Destroy old_task\nRelease its captured\nresources", fillcolor="#dcfce7"];
+  local -> guard -> parameter;
+}

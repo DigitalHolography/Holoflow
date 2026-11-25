@@ -42,6 +42,10 @@ void from_json(const nlohmann::json &j, SlidingAverageSettings &s);
 
 class SlidingAverageFactory : public holoflow::core::IAsyncTaskFactory {
 public:
+  holoflow::core::ExecutionUpdatePolicy execution_update_policy() const noexcept override {
+    return holoflow::core::ExecutionUpdatePolicy::ExplicitInvalidation;
+  }
+
   ~SlidingAverageFactory() override = default;
 
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,

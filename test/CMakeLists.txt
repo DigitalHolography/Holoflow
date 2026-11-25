@@ -16,26 +16,11 @@ enable_testing()
 
 include(Testing)
 
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
-execute_process(
-    COMMAND "${Python3_EXECUTABLE}" -c "import numpy"
-    RESULT_VARIABLE HOLOFLOW_NUMPY_IMPORT_RESULT
-    OUTPUT_QUIET
-    ERROR_VARIABLE HOLOFLOW_NUMPY_IMPORT_ERROR
-)
-if(NOT HOLOFLOW_NUMPY_IMPORT_RESULT EQUAL 0)
-    message(FATAL_ERROR
-        "The test suite requires NumPy for ${Python3_EXECUTABLE}: "
-        "${HOLOFLOW_NUMPY_IMPORT_ERROR}"
-    )
-endif()
-
-file(TO_CMAKE_PATH "${Python3_EXECUTABLE}" HOLOFLOW_TEST_PYTHON_EXECUTABLE)
-
 add_subdirectory(holoflow)
 add_subdirectory(holonp)
 add_subdirectory(holotask)
 add_subdirectory(holovibes)
+add_subdirectory(holoflow_event)
 
 if(ENABLE_COVERAGE)
     add_test(
@@ -44,6 +29,8 @@ if(ENABLE_COVERAGE)
     )
     set_tests_properties(coverage::production_image PROPERTIES
         LABELS coverage
-        TIMEOUT 10
+        # Native coverage instrumentation of the complete production image can
+        # take substantially longer than the probe itself on Windows runners.
+        TIMEOUT 120
     )
 endif()

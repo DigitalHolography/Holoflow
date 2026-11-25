@@ -237,7 +237,9 @@ void VisualizationWorkspace::populate_view_menu(QMenu *view_menu) {
 
   auto *visualizations_menu = view_menu->addMenu(tr("Visualizations"));
   for (const auto &entry : entries_) {
-    visualizations_menu->addAction(entry->view_action);
+    if (entry->descriptor.show_in_view_menu) {
+      visualizations_menu->addAction(entry->view_action);
+    }
   }
 
   view_menu->addSeparator();

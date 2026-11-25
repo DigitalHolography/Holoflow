@@ -75,6 +75,22 @@ public:
         slot_count_(slot_count), input_size_(input_size), element_size_(element_size),
         delay_((settings_.window_size - 1) / 2) {}
 
+  bool can_reuse_buffers(size_t bytes, size_t element_size,
+                         holoflow::core::MemLoc mem_loc) const noexcept {
+    return bytes == slot_count_ * element_size_ && element_size == element_size_ &&
+           mem_loc == input_desc_.mem_loc;
+  }
+
+  std::byte *buffer() const noexcept { return buffer_; }
+  std::byte *scratch() const noexcept { return scratch_; }
+
+  void take_buffers_from(DualReaderBatchQueue &old) noexcept {
+    host_buffer_    = std::move(old.host_buffer_);
+    device_buffer_  = std::move(old.device_buffer_);
+    host_scratch_   = std::move(old.host_scratch_);
+    device_scratch_ = std::move(old.device_scratch_);
+  }
+
   std::optional<holoflow::core::TView> acquire_input(int index) override {
     if (index != 0) {
       throw std::out_of_range("DualReaderBatchQueue::acquire_input: invalid index");
@@ -87,6 +103,52 @@ public:
     auto        &storage   = storage_access().owned_input_storage(0);
     storage.ptr            = buffer_ + write_idx * element_size_;
     return holoflow::core::TView{.desc = input_desc_, .storage = &storage};
+  }
+
+  std::optional<std::vector<std::byte *>> owned_input_pointers(size_t index) const override {
+    if (index != 0)
+      throw std::out_of_range("DualReaderBatchQueue input port");
+    std::vector<std::byte *> pointers;
+    for (size_t i = 0; i < slot_count_; i += input_size_)
+      pointers.push_back(buffer_ + i * element_size_);
+    return pointers;
+  }
+
+  std::optional<std::vector<std::byte *>> owned_output_pointers(size_t index) const override {
+    if (index > 1)
+      throw std::out_of_range("DualReaderBatchQueue output port");
+    std::vector<std::byte *> pointers;
+    for (size_t i = 0; i < slot_count_; ++i)
+      pointers.push_back(buffer_ + i * element_size_);
+    if (index == 1 && delay_ != 0)
+      pointers.push_back(scratch_);
+    return pointers;
+  }
+
+  std::optional<holoflow::core::PointerSequence>
+  owned_input_pointer_sequence(size_t index) const override {
+    if (index != 0)
+      throw std::out_of_range("DualReaderBatchQueue input port");
+    holoflow::core::PointerSequence result;
+    const size_t                    count = slot_count_ / input_size_;
+    const size_t phase = write_idx_.load(std::memory_order_relaxed) / input_size_;
+    for (size_t i = 0; i < count; ++i)
+      result.cycle.push_back((phase + i) % count);
+    return result;
+  }
+
+  std::optional<holoflow::core::PointerSequence>
+  owned_output_pointer_sequence(size_t index) const override {
+    if (index > 1)
+      throw std::out_of_range("DualReaderBatchQueue output port");
+    holoflow::core::PointerSequence result;
+    if (index == 1 && sequence_ < delay_)
+      result.prefix.assign(delay_ - sequence_, slot_count_); // Startup scratch domain entry.
+    const size_t phase =
+        index == 0 ? current_read_idx_ : delayed_read_idx_.load(std::memory_order_relaxed);
+    for (size_t i = 0; i < slot_count_; ++i)
+      result.cycle.push_back((phase + i) % slot_count_);
+    return result;
   }
 
   void release_output(int index) override {
@@ -219,13 +281,18 @@ DualReaderBatchQueueFactory::infer(std::span<const holoflow::core::TDesc> input_
   auto output     = input;
   output.shape[0] = 1;
   const holoflow::core::TDesc valid({1}, holoflow::core::DType::U8, holoflow::core::MemLoc::Host);
+  const size_t                delay = (settings.window_size - 1) / 2;
+  const size_t slots = lcm_above(input.shape[0], size_t{1},
+                                 settings.target_capacity + input.shape[0] + delay + size_t{1});
   return {
-      .input_descs   = {input},
-      .output_descs  = {output, output, valid},
-      .in_place      = {},
-      .owned_inputs  = {true},
-      .owned_outputs = {true, true, false},
-      .kind          = holoflow::core::TaskKind::Async,
+      .input_descs                 = {input},
+      .output_descs                = {output, output, valid},
+      .in_place                    = {},
+      .owned_inputs                = {true},
+      .owned_outputs               = {true, true, false},
+      .kind                        = holoflow::core::TaskKind::Async,
+      .owned_input_pointer_counts  = {slots / input.shape[0]},
+      .owned_output_pointer_counts = {slots, slots + (delay != 0 ? 1 : 0), std::nullopt},
   };
 }
 
@@ -275,10 +342,38 @@ DualReaderBatchQueueFactory::create(std::span<const holoflow::core::TDesc> input
       element_size);
 }
 
-std::unique_ptr<holoflow::core::IAsyncTask> DualReaderBatchQueueFactory::update(
-    std::unique_ptr<holoflow::core::IAsyncTask>, std::span<const holoflow::core::TDesc> input_descs,
-    const nlohmann::json &jsettings, const holoflow::core::AsyncCreateCtx &ctx) const {
-  return create(input_descs, jsettings, ctx);
+std::unique_ptr<holoflow::core::IAsyncTask>
+DualReaderBatchQueueFactory::update(std::unique_ptr<holoflow::core::IAsyncTask> old_task,
+                                    std::span<const holoflow::core::TDesc>      input_descs,
+                                    const nlohmann::json                       &jsettings,
+                                    const holoflow::core::AsyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
+  const auto                           infer        = this->infer(input_descs, jsettings);
+  const auto                           settings     = jsettings.get<DualReaderBatchQueueSettings>();
+  const auto                          &input        = input_descs[0];
+  const size_t                         input_size   = input.shape[0];
+  const size_t                         element_size = input.num_bytes() / input_size;
+  const size_t                         slot_count   = *infer.owned_output_pointer_counts[0];
+  auto                                *old = dynamic_cast<DualReaderBatchQueue *>(old_task.get());
+  if (!old || !old->can_reuse_buffers(slot_count * element_size, element_size, input.mem_loc)) {
+    ctx.invalidate_execution();
+    return create(input_descs, jsettings, ctx);
+  }
+
+  // Complete fallible construction and scratch initialization while old_task still owns every
+  // captured allocation. The transfer then resets reader state without changing buffer addresses.
+  auto replacement = std::make_unique<DualReaderBatchQueue>(
+      settings, input, infer.output_descs[0], HostPtr<std::byte>{}, DevPtr<std::byte>{},
+      HostPtr<std::byte>{}, DevPtr<std::byte>{}, old->buffer(), old->scratch(), slot_count,
+      input_size, element_size);
+  if (input.mem_loc == holoflow::core::MemLoc::Host) {
+    std::fill_n(old->scratch(), element_size, std::byte{0});
+  } else {
+    CUDA_CHECK(cudaMemsetAsync(old->scratch(), 0, element_size, ctx.consumer_stream));
+    CUDA_CHECK(cudaStreamSynchronize(ctx.consumer_stream));
+  }
+  replacement->take_buffers_from(*old);
+  return replacement;
 }
 
 } // namespace holotask::asyncs

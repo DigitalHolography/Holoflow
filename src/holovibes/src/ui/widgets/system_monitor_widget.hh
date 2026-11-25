@@ -17,6 +17,7 @@
 #include <QGroupBox>
 #include <QLabel>
 #include <QProgressBar>
+#include <QTimer>
 
 namespace holovibes::ui {
 
@@ -39,18 +40,10 @@ public:
   void set_dropped_frames(const QString &text);
   void set_pipeline_latency(const QString &text);
 
-  void set_input_queue(int value, int max) {
-    input_queue_bar_->setMaximum(max);
-    input_queue_bar_->setValue(value);
-  }
-  void set_output_queue(int value, int max) {
-    output_queue_bar_->setMaximum(max);
-    output_queue_bar_->setValue(value);
-  }
-  void set_record_queue(int value, int max) {
-    record_queue_bar_->setMaximum(max);
-    record_queue_bar_->setValue(value);
-  }
+  void start_pipeline_progress_bar(int estimated_time);
+  void stop_pipeline_progress_bar();
+  void pipeline_progress_bar_finished();
+  void reset_pipeline_progress_bar();
 
 private:
   void setup_ui();
@@ -67,10 +60,8 @@ private:
   QLabel *dropped_frames_value_;
   QLabel *pipeline_latency_value_;
 
-  // Queue progress bars
-  QProgressBar *input_queue_bar_;
-  QProgressBar *output_queue_bar_;
-  QProgressBar *record_queue_bar_;
+  QProgressBar *pipeline_start_bar_;
+  QTimer* pipeline_start_timer_;
 };
 
 } // namespace holovibes::ui

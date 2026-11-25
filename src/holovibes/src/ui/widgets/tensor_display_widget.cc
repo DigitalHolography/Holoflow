@@ -27,6 +27,7 @@
 #include <QPaintEvent>
 #include <QPainter>
 #include <QStyleOption>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
@@ -53,13 +54,19 @@ uniform int use_colormap;
 uniform float vmin;
 uniform float vmax;
 uniform bool vertical_flip;
+uniform int invert_display;
 
 void main(){
   vec2 sample_uv = vec2(uv.x, vertical_flip ? 1.0 - uv.y : uv.y);
   float raw_val = texture(tex, sample_uv).r;
   
   // Normalize the value to 0.0 - 1.0 based on bounds
-  float g = clamp((raw_val - vmin) / (vmax - vmin), 0.0, 1.0);
+  float range = vmax - vmin;
+  float g = range > 0.0 ? clamp((raw_val - vmin) / range, 0.0, 1.0)
+                        : (raw_val > vmax ? 1.0 : 0.0);
+  if (invert_display == 1) {
+    g = 1.0 - g;
+  }
 
   if (use_colormap == 1) {
     // Sample the colormap lookup texture
@@ -94,6 +101,11 @@ TensorDisplayWidget::TensorDisplayWidget(QWidget *p) : QOpenGLWidget(p) {
   waiting_label_->setWordWrap(true);
   waiting_label_->setAttribute(Qt::WA_TransparentForMouseEvents);
   layout->addWidget(waiting_label_, 1);
+
+  waiting_timer_ = new QTimer(this);
+  waiting_timer_->setSingleShot(true);
+  waiting_timer_->setTimerType(Qt::PreciseTimer);
+  connect(waiting_timer_, &QTimer::timeout, this, &TensorDisplayWidget::apply_waiting_placeholder);
 }
 
 void TensorDisplayWidget::set_fixed_aspect(std::optional<QSize> size) {
@@ -134,6 +146,13 @@ void TensorDisplayWidget::set_value_range(float vmin, float vmax) {
   update();
 }
 
+void TensorDisplayWidget::set_display_inverted(bool inverted) {
+  if (display_inverted_ == inverted)
+    return;
+  display_inverted_ = inverted;
+  update();
+}
+
 void TensorDisplayWidget::initializeGL() {
   initializeOpenGLFunctions();
   const QColor background = palette().color(QPalette::Window);
@@ -164,11 +183,12 @@ void TensorDisplayWidget::initializeGL() {
   sp->link();
   prog_ = sp->programId();
 
-  tex_loc_           = glGetUniformLocation(prog_, "tex");
-  cmap_tex_loc_      = glGetUniformLocation(prog_, "colormap_tex");
-  use_cmap_loc_      = glGetUniformLocation(prog_, "use_colormap");
-  vmin_loc_          = glGetUniformLocation(prog_, "vmin");
-  vmax_loc_          = glGetUniformLocation(prog_, "vmax");
+  tex_loc_      = glGetUniformLocation(prog_, "tex");
+  cmap_tex_loc_ = glGetUniformLocation(prog_, "colormap_tex");
+  use_cmap_loc_ = glGetUniformLocation(prog_, "use_colormap");
+  vmin_loc_     = glGetUniformLocation(prog_, "vmin");
+  vmax_loc_     = glGetUniformLocation(prog_, "vmax");
+  invert_display_loc_ = glGetUniformLocation(prog_, "invert_display");
   vertical_flip_loc_ = glGetUniformLocation(prog_, "vertical_flip");
 
   glGenTextures(1, &tex_);
@@ -326,6 +346,7 @@ void TensorDisplayWidget::presentTensor(const QByteArray &bytes, int w, int h,
   restore_frame_ = false;
   doneCurrent();
 
+  waiting_timer_->stop();
   waiting_label_->hide();
   update();
   emit tensorDisplayed();
@@ -359,10 +380,34 @@ void TensorDisplayWidget::set_reticle_radius(double radius) {
   update();
 }
 
-void TensorDisplayWidget::show_waiting_placeholder(const QString &message) {
+void TensorDisplayWidget::set_registration_ellipse_enabled(bool enabled) {
+  registration_ellipse_enabled_ = enabled;
+  update();
+}
+
+void TensorDisplayWidget::set_registration_ellipse_radius(double radius) {
+  registration_ellipse_radius_ = qBound(0.05, radius, 1.0);
+  update();
+}
+
+void TensorDisplayWidget::show_waiting_placeholder(const QString &message, int delay_ms) {
+  pending_waiting_message_ = message.isEmpty() ? tr("Waiting for data...") : message;
+  if (delay_ms > 0 && texture_storage_allocated_ && img_w_ > 0 && img_h_ > 0) {
+    // Workspace refreshes can repeat this request. Preserve the original deadline so a missing
+    // replacement frame eventually clears the display even while the workspace keeps updating.
+    if (!waiting_timer_->isActive())
+      waiting_timer_->start(delay_ms);
+    return;
+  }
+
+  waiting_timer_->stop();
+  apply_waiting_placeholder();
+}
+
+void TensorDisplayWidget::apply_waiting_placeholder() {
   retained_frame_.clear();
   restore_frame_ = false;
-  waiting_label_->setText(message.isEmpty() ? tr("Waiting for data...") : message);
+  waiting_label_->setText(pending_waiting_message_);
   waiting_label_->show();
   img_w_ = 0;
   img_h_ = 0;
@@ -397,6 +442,37 @@ void TensorDisplayWidget::drawReticle() {
   glLineWidth(1.0f);
 }
 
+void TensorDisplayWidget::drawRegistrationEllipse() {
+  if (!registration_ellipse_enabled_ || img_w_ <= 0 || img_h_ <= 0)
+    return;
+
+  const int segments = 64;
+  // The registration mask is defined in image coordinates with semi-axes proportional to the
+  // image width and height. In normalized OpenGL coordinates this is a circle; the image viewport
+  // then renders it as a horizontal ellipse for a 512x320 image and as a circle for 512x512.
+  const double radius_x = registration_ellipse_radius_;
+  const double radius_y = registration_ellipse_radius_;
+  std::vector<float> vertices;
+  vertices.reserve(static_cast<size_t>(segments + 1) * 2);
+
+  for (int i = 0; i <= segments; ++i) {
+    const float angle = 2.0f * 3.14159265359f * float(i) / float(segments);
+    vertices.push_back(static_cast<float>(std::cos(angle) * radius_x));
+    vertices.push_back(static_cast<float>(std::sin(angle) * radius_y));
+  }
+
+  glBindVertexArray(reticle_vao_);
+  glBindBuffer(GL_ARRAY_BUFFER, reticle_vbo_);
+  glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *)0);
+  glUseProgram(reticle_prog_);
+  glUniform4f(reticle_color_loc_, 0.0f, 1.0f, 1.0f, 1.0f);
+  glLineWidth(2.0f);
+  glDrawArrays(GL_LINE_STRIP, 0, segments + 1);
+  glLineWidth(1.0f);
+}
+
 void TensorDisplayWidget::paintGL() {
   if (restore_frame_ && !retained_frame_.isEmpty()) {
     updateTexture(retained_frame_.constData(), retained_size_.width(), retained_size_.height(),
@@ -423,6 +499,7 @@ void TensorDisplayWidget::paintGL() {
   glUniform1f(vmin_loc_, vmin_);
   glUniform1f(vmax_loc_, vmax_);
   glUniform1i(vertical_flip_loc_, vertical_flip_ ? 1 : 0);
+  glUniform1i(invert_display_loc_, display_inverted_ ? 1 : 0);
 
   // Bind Main Image Texture
   glActiveTexture(GL_TEXTURE0);
@@ -441,6 +518,7 @@ void TensorDisplayWidget::paintGL() {
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
   drawReticle();
+  drawRegistrationEllipse();
 }
 
 void TensorDisplayWidget::set_retain_frame(bool enabled) {

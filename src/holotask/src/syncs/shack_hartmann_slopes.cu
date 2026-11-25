@@ -146,15 +146,14 @@ __global__ void recover_phase_correlation_peaks(const float *__restrict__ maps,
     return;
   }
 
-  const size_t pixels_per_map = height * width;
-  const float *map            = maps + map_index * pixels_per_map;
+  const size_t                 pixels_per_map = height * width;
+  const float                 *map            = maps + map_index * pixels_per_map;
   detail::PhaseCorrelationPeak local_peak{-FLT_MAX, 0};
   for (size_t pixel = threadIdx.x; pixel < pixels_per_map; pixel += blockDim.x) {
     local_peak = detail::select_phase_correlation_peak(local_peak, {map[pixel], pixel});
   }
 
-  __shared__ detail::PhaseCorrelationPeak
-      shared_peaks[detail::kPhaseCorrelationPeakBlockSize];
+  __shared__ detail::PhaseCorrelationPeak shared_peaks[detail::kPhaseCorrelationPeakBlockSize];
   const auto peak = detail::reduce_phase_correlation_peak(local_peak, shared_peaks);
   if (threadIdx.x != 0) {
     return;
@@ -232,6 +231,13 @@ public:
         cross_correlation_(std::move(cross_correlation)), xcorr_scratch_(std::move(xcorr_scratch)),
         measured_shifts_(std::move(measured_shifts)), active_(std::move(active)), stream_(stream) {}
 
+  bool supports_cuda_graph() const noexcept override { return true; }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, nullptr, nullptr, nullptr};
+    (void)enqueue(execution);
+  }
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     const auto addresses = graph_addresses(ctx);
     if (stream_ == nullptr) {
@@ -261,6 +267,8 @@ public:
   const ShackHartmannSlopeSettings &settings() const override { return settings_; }
   const holoflow::core::TDesc      &input_desc() const override { return input_desc_; }
 
+  void update_propagation_distance(float distance) noexcept override { settings_.z = distance; }
+
   void update_stream(cudaStream_t stream) override {
     if (stream_ == stream) {
       return;
@@ -289,9 +297,8 @@ private:
   void try_capture(holoflow::core::SyncCtx                         &ctx,
                    const detail::ShackHartmannCudaGraph::Addresses &addresses) {
     try {
-      const bool captured = graph_.capture(stream_, addresses, [&]() {
-        return enqueue(ctx) == holoflow::core::OpResult::Ok;
-      });
+      const bool captured = graph_.capture(
+          stream_, addresses, [&]() { return enqueue(ctx) == holoflow::core::OpResult::Ok; });
       if (!captured) {
         graph_capture_enabled_ = false;
       }
@@ -333,15 +340,15 @@ private:
         reinterpret_cast<const float *>(xcorr_view.data()), measured_shifts_.get(), sample_count,
         height, width);
 
-    const float delta_out_x =
-        settings_.lambda * settings_.z / (static_cast<float>(width) * settings_.dx);
-    const float delta_out_y =
-        settings_.lambda * settings_.z / (static_cast<float>(height) * settings_.dy);
+    // The propagated pixel pitch is lambda*z/(N*pitch); conversion to slope divides by z.
+    // Cancel that distance so distance-only updates leave captured kernel arguments unchanged.
+    const float slope_per_pixel_x = settings_.lambda / (static_cast<float>(width) * settings_.dx);
+    const float slope_per_pixel_y = settings_.lambda / (static_cast<float>(height) * settings_.dy);
 
     const size_t center_index = (sy / 2) * sx + sx / 2;
     recover_zero_mean_slopes<<<1, 1, 0, stream_>>>(
         measured_shifts_.get(), active_.get(), reinterpret_cast<float *>(ctx.outputs[0].data()),
-        sample_count, center_index, delta_out_x / settings_.z, delta_out_y / settings_.z);
+        sample_count, center_index, slope_per_pixel_x, slope_per_pixel_y);
 
     CUDA_CHECK(cudaGetLastError());
     return holoflow::core::OpResult::Ok;
@@ -473,16 +480,23 @@ ShackHartmannSlopesFactory::update(std::unique_ptr<holoflow::core::ISyncTask> ol
                                    std::span<const holoflow::core::TDesc>     input_descs,
                                    const nlohmann::json                      &jsettings,
                                    const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
   (void)infer(input_descs, jsettings);
 
   auto *old_slopes = dynamic_cast<detail::ShackHartmannSlopesTaskBase *>(old_task.get());
   if (old_slopes != nullptr && input_descs.size() == 1) {
-    const auto settings = jsettings.get<ShackHartmannSlopeSettings>();
-    if (settings == old_slopes->settings() && same_desc(input_descs[0], old_slopes->input_desc())) {
+    const auto settings            = jsettings.get<ShackHartmannSlopeSettings>();
+    auto       compatible_settings = settings;
+    compatible_settings.z          = old_slopes->settings().z;
+    if (compatible_settings == old_slopes->settings() &&
+        same_desc(input_descs[0], old_slopes->input_desc())) {
       old_slopes->update_stream(ctx.stream);
+      old_slopes->update_propagation_distance(settings.z);
       return old_task;
     }
   }
+
+  ctx.invalidate_execution();
 
   return create(input_descs, jsettings, ctx);
 }

@@ -26,10 +26,13 @@ namespace holovibes::pipeline {
 enum class ImportSource {
   AMETEK_S710_EURESYS_COAXLINK_OCTO,
   AMETEK_S711_EURESYS_COAXLINK_QSFP,
+  AMETEK_S991_EURESYS_COAXLINK_QSFP,
   HOLOFILE,
   MTD_DATASET,
   HOLO_FOCUS,
 };
+
+const char *to_string(ImportSource src);
 
 enum class LoadMethod {
   READ_LIVE,
@@ -129,7 +132,8 @@ struct Settings {
   SpacialMethod spacial_method;
   float         spacial_lambda;
   float         spacial_z;
-  float         spacial_pixel_size;
+  float         spacial_pixel_size;          // in metters
+  bool          fresnel_use_numpy   = false; ///< Use the graph-composed CUDA NumPy Fresnel path.
   bool          asp_padding_enabled = false;
   int           asp_padded_width    = 1024;
   int           asp_padded_height   = 1024;
@@ -171,6 +175,12 @@ struct Settings {
   bool        pp_fft_shift;
   bool        pp_flatfield;
   float       pp_flatfield_cutoff_period_m;
+  bool        pp_spatial_contrast;
+  int         pp_spatial_contrast_window_size;
+  int         pp_spatial_contrast_dimensions = 2;
+  int         pp_spatial_contrast_method = 0;
+  float       pp_spatial_contrast_display_max = 0.75f;
+  bool        pp_spatial_contrast_invert_display = false;
   int         pp_accumulation;
   bool        pp_convolution;
   std::string pp_convolution_path;
@@ -186,6 +196,10 @@ struct Settings {
   RecordingMethod       recording_method;
   std::filesystem::path recording_path;
   int                   recording_count;
+  std::string           recording_format           = "holo";
+  std::string           recording_codec            = "mpeg4";
+  std::string           recording_resize_algorithm = "CpuBilinear";
+  int                   recording_queue_count;
 
   // Auto-focus
   bool             autofocus_enabled;
@@ -200,6 +214,11 @@ struct Settings {
 
   [[nodiscard]] double signal_plot_sample_time_seconds() const {
     return static_cast<double>(time_stride) / input_sampling_frequency_hz;
+  }
+
+  [[nodiscard]] bool can_use_camera_record() const {
+    return recording_format == "holo" && recording_method == RecordingMethod::RAW &&
+           (import_source != ImportSource::HOLOFILE);
   }
 };
 

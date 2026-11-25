@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "holonp/multiply.hh"
+#include "utils/tensor_common.hh"
 
 #include <array>
 #include <cuComplex.h>
@@ -44,6 +45,22 @@ holoflow::core::DType promote_dtype(holoflow::core::DType a, holoflow::core::DTy
 // Compile-time type promotion for C++ types
 template <typename T1, typename T2> struct Promote {
   using type = decltype(std::declval<T1>() + std::declval<T2>());
+};
+
+// Keep integer arithmetic in the dtype selected by promote_dtype.  The C++
+// usual arithmetic conversions would otherwise promote uint8_t/uint16_t to
+// int, causing the kernel to write wider elements than the output descriptor.
+template <> struct Promote<uint8_t, uint8_t> {
+  using type = uint8_t;
+};
+template <> struct Promote<uint8_t, uint16_t> {
+  using type = uint16_t;
+};
+template <> struct Promote<uint16_t, uint8_t> {
+  using type = uint16_t;
+};
+template <> struct Promote<uint16_t, uint16_t> {
+  using type = uint16_t;
 };
 
 // Specializations for cuFloatComplex (as standard C++ doesn't natively add it to reals)
@@ -95,28 +112,6 @@ inline void check(bool cond, const std::string &msg) {
   if (!cond) {
     throw std::invalid_argument("Multiply: " + msg);
   }
-}
-
-bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
-  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
-         a.mem_loc == b.mem_loc && a.offset == b.offset;
-}
-
-std::vector<size_t> get_elem_strides(const holoflow::core::TDesc &d) {
-  size_t esize = holoflow::core::size_of(d.dtype);
-  if (!d.strides.empty()) {
-    std::vector<size_t> s;
-    for (auto val : d.strides)
-      s.push_back(val / esize);
-    return s;
-  }
-  std::vector<size_t> s(d.shape.size());
-  size_t              acc = 1;
-  for (int i = int(d.shape.size()) - 1; i >= 0; --i) {
-    s[i] = acc;
-    acc *= d.shape[i];
-  }
-  return s;
 }
 
 class Multiply : public holoflow::core::ISyncTask {
@@ -253,8 +248,8 @@ MultiplyFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlo
   size_t      total    = 1;
 
   std::vector<size_t> a_strides_h(ndim), b_strides_h(ndim);
-  auto                as_raw = get_elem_strides(a);
-  auto                bs_raw = get_elem_strides(b);
+  auto                as_raw = utils::get_elem_strides(a);
+  auto                bs_raw = utils::get_elem_strides(b);
 
   for (size_t i = 0; i < ndim; ++i) {
     total *= odesc.shape[i];
@@ -294,8 +289,8 @@ MultiplyFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     const auto &old_idescs   = old_mul->idescs();
 
     bool can_reuse = (new_settings == old_mul->settings()) &&
-                     same_desc(input_descs[0], old_idescs[0]) &&
-                     same_desc(input_descs[1], old_idescs[1]);
+                     utils::same_desc(input_descs[0], old_idescs[0]) &&
+                     utils::same_desc(input_descs[1], old_idescs[1]);
 
     if (can_reuse) {
       old_mul->update_stream(ctx.stream);

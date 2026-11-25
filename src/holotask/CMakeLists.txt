@@ -65,6 +65,7 @@ target_link_libraries(${TARGET}
     curaii
     holofile
     holoflow
+    holocam
     spdlog::spdlog
     nlohmann_json::nlohmann_json
     Boost::graph
@@ -77,6 +78,10 @@ target_link_libraries(${TARGET}
     nvJitLink
     nvrtc
 )
+
+if(TARGET holoflow_ffmpeg)
+    target_link_libraries(${TARGET} PRIVATE holoflow_ffmpeg)
+endif()
 
 if(EGrabber_FOUND)
     target_compile_definitions(${TARGET} PRIVATE HOLOTASK_HAS_EGRABBER)
