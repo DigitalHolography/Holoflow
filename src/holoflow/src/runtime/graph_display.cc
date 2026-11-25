@@ -49,6 +49,7 @@ constexpr std::string_view kAsyncConsumerFillColor   = "#ffe6e6";
 constexpr std::string_view kAsyncConsumerBorderColor = "#cc0000";
 constexpr std::string_view kAsyncSignalColor         = "#888888";
 constexpr std::string_view kSyncFillColor            = "#ccffcc";
+constexpr std::string_view kConstantSyncFillColor    = "#dcefdc";
 constexpr std::string_view kSyncBorderColor          = "#333333";
 constexpr std::string_view kSectionBorderColor       = "gray";
 constexpr std::string_view kSectionFillColor         = "#f8f8f8";
@@ -260,10 +261,10 @@ static void write_compiled_graph_header(std::ostringstream                 &ss,
 }
 
 static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPlan &g,
-                                 const std::map<size_t, size_t>     &tid_to_sid,
-                                 const GraphCompiledDumpPreferences &prefs,
+                                 const std::map<size_t, size_t>      &tid_to_sid,
+                                 const GraphCompiledDumpPreferences  &prefs,
                                  const std::vector<runtime::Section> &sections,
-                                 std::string_view                    failure_node) {
+                                 std::string_view                     failure_node) {
   std::unordered_set<runtime::GraphPlan::vertex_descriptor> constant_nodes;
   for (const auto &section : sections)
     constant_nodes.insert(section.const_sync_topo.begin(), section.const_sync_topo.end());
@@ -360,13 +361,15 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
                             v, v, kAsyncSignalColor);
         }
       } else {
+        const bool        is_constant = constant_nodes.contains(v);
+        const auto        fill_color  = is_constant ? kConstantSyncFillColor : kSyncFillColor;
         const std::string label = label_base.str() + "\n(" + np.spec.kind + ")" +
-                                  (constant_nodes.contains(v) ? "\nConstant (runs once per scheduler)" : "") +
+                                  (is_constant ? "\nConstant (runs once per scheduler)" : "") +
                                   ids_line + "\n";
         ss << std::format(
             "  v{} [label=\"{}\", fillcolor=\"{}\", color=\"{}\", "
             "penwidth={}];\n",
-            v, escape_for_label(label), is_failure_node ? kFailureFillColor : kSyncFillColor,
+            v, escape_for_label(label), is_failure_node ? kFailureFillColor : fill_color,
             is_failure_node ? kFailureBorderColor : kSyncBorderColor, is_failure_node ? 3 : 1);
       }
     }
@@ -410,13 +413,15 @@ static void write_compiled_edges(std::ostringstream &ss, const runtime::GraphPla
     bool reverse_edge = false;
     if (uses_snake_layout(prefs)) {
       for (size_t section_idx = 0; section_idx < sections.size(); ++section_idx) {
-        const auto &section = sections[section_idx];
-        const bool contains_source = g[u].infer.kind == core::TaskKind::Async
-            ? contains_vertex(section.async_cons, u)
-            : contains_vertex(section.const_sync_topo, u) || contains_vertex(section.sync_topo, u);
-        const bool contains_target = g[v].infer.kind == core::TaskKind::Async
-            ? contains_vertex(section.async_prod, v)
-            : contains_vertex(section.const_sync_topo, v) || contains_vertex(section.sync_topo, v);
+        const auto &section         = sections[section_idx];
+        const bool  contains_source = g[u].infer.kind == core::TaskKind::Async
+                                          ? contains_vertex(section.async_cons, u)
+                                          : contains_vertex(section.const_sync_topo, u) ||
+                                                contains_vertex(section.sync_topo, u);
+        const bool  contains_target = g[v].infer.kind == core::TaskKind::Async
+                                          ? contains_vertex(section.async_prod, v)
+                                          : contains_vertex(section.const_sync_topo, v) ||
+                                                contains_vertex(section.sync_topo, v);
         if (contains_source && contains_target) {
           reverse_edge = section_positions[section_idx] % 2 != 0;
           break;
@@ -628,15 +633,13 @@ static void write_compiled_sections(std::ostringstream                  &ss,
   }
 }
 
-static std::string render_compiled_graph(const GraphPlan                    &graph,
-                                         const std::vector<Section>         &sections,
-                                         const std::map<size_t, size_t>     &tid_to_sid,
-                                         const CompiledGraphDumpMetadata    &metadata,
-                                         const GraphCompiledDumpPreferences &prefs,
-                                         std::string_view                   filename,
-                                         std::string_view                   failure_node = {},
-                                         std::string_view                   failure_context = {},
-                                         GraphFailureKind failure_kind = GraphFailureKind::Runtime) {
+static std::string
+render_compiled_graph(const GraphPlan &graph, const std::vector<Section> &sections,
+                      const std::map<size_t, size_t>     &tid_to_sid,
+                      const CompiledGraphDumpMetadata    &metadata,
+                      const GraphCompiledDumpPreferences &prefs, std::string_view filename,
+                      std::string_view failure_node = {}, std::string_view failure_context = {},
+                      GraphFailureKind failure_kind = GraphFailureKind::Runtime) {
   std::ostringstream ss;
   write_compiled_graph_header(ss, prefs, filename);
 

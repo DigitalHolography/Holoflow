@@ -40,12 +40,12 @@ TEST(CompiledGraphDisplayTest, RendersSyncAsyncEdgesSectionsAndResources) {
                holoflow::core::TDesc({4}, holoflow::core::DType::F32, holoflow::core::MemLoc::Host),
                0},
            output.graph);
-  output.sections.push_back({.id         = 3,
-                             .name       = "producer",
-                             .stream     = nullptr,
+  output.sections.push_back({.id              = 3,
+                             .name            = "producer",
+                             .stream          = nullptr,
                              .const_sync_topo = {source_v},
-                             .async_cons = {},
-                             .async_prod = {bridge_v}});
+                             .async_cons      = {},
+                             .async_prod      = {bridge_v}});
   output.resources.tensor_descs.emplace(
       0, holoflow::core::TDesc({4}, holoflow::core::DType::F32, holoflow::core::MemLoc::Host));
   output.resources.tid_to_sid.emplace(0, 9);
@@ -61,6 +61,13 @@ TEST(CompiledGraphDisplayTest, RendersSyncAsyncEdgesSectionsAndResources) {
   EXPECT_NE(dot.find("(sync)\\nConstant (runs once per scheduler)"), std::string::npos);
   EXPECT_EQ(dot.find("Constant (runs once per scheduler)"),
             dot.rfind("Constant (runs once per scheduler)"));
+  EXPECT_NE(dot.find("fillcolor=\"#dcefdc\""), std::string::npos);
+
+  const auto failure_dot =
+      holoflow::runtime::to_dot(output, {}, "runtime_failure", "source", "test failure",
+                                holoflow::runtime::GraphFailureKind::Runtime);
+  EXPECT_NE(failure_dot.find("fillcolor=\"#ff9999\""), std::string::npos);
+  EXPECT_EQ(failure_dot.find("fillcolor=\"#dcefdc\""), std::string::npos);
 }
 
 TEST(CompiledGraphDisplayTest, RendersEmptyOutput) {
@@ -87,13 +94,12 @@ TEST(CompiledGraphDisplayTest, HighlightsRuntimeFailureNodeAndContext) {
       .out_tids = {},
   };
 
-  const auto source_v = add_vertex(source, output.graph);
+  const auto source_v  = add_vertex(source, output.graph);
   const auto failing_v = add_vertex(failing_node, output.graph);
   add_edge(source_v, failing_v,
            holoflow::runtime::EdgePlan{
                {0, 0},
-               holoflow::core::TDesc({4}, holoflow::core::DType::F32,
-                                     holoflow::core::MemLoc::Host),
+               holoflow::core::TDesc({4}, holoflow::core::DType::F32, holoflow::core::MemLoc::Host),
                0,
            },
            output.graph);
@@ -106,6 +112,7 @@ TEST(CompiledGraphDisplayTest, HighlightsRuntimeFailureNodeAndContext) {
   EXPECT_NE(dot.find("label=\"RUNTIME FAILURE\\nThread: Scheduler::run_section"),
             std::string::npos);
   EXPECT_NE(dot.find("label=\"failing_node\\n(sync)"), std::string::npos);
+  EXPECT_NE(dot.find("fillcolor=\"#ccffcc\""), std::string::npos);
   EXPECT_NE(dot.find("fillcolor=\"#ff9999\""), std::string::npos);
   EXPECT_NE(dot.find("color=\"#cc0000\""), std::string::npos);
   EXPECT_NE(dot.find("Error: test failure"), std::string::npos);
@@ -113,9 +120,9 @@ TEST(CompiledGraphDisplayTest, HighlightsRuntimeFailureNodeAndContext) {
 
 TEST(CompiledGraphDisplayTest, UsesExplicitCompilationFailureKind) {
   holoflow::runtime::CompilerOutput output;
-  const auto dot = holoflow::runtime::to_dot(
-      output, {}, "compilation_failure", {}, "Unexpected validation error",
-      holoflow::runtime::GraphFailureKind::Compilation);
+  const auto dot = holoflow::runtime::to_dot(output, {}, "compilation_failure", {},
+                                             "Unexpected validation error",
+                                             holoflow::runtime::GraphFailureKind::Compilation);
 
   EXPECT_NE(dot.find("COMPILATION FAILURE"), std::string::npos);
   EXPECT_NE(dot.find("Unexpected validation error"), std::string::npos);
