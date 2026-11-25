@@ -94,6 +94,7 @@
 #include "holonp/zeros.hh"
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
+#include "holotask/asyncs/pca_decomposition_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
 #include "holotask/sinks/ffmpeg.hh"
 #include "holotask/sinks/holofile.hh"
@@ -239,19 +240,32 @@ Manager::Manager(
 void Manager::register_components() {
   reg_async<asyncs::BatchQueueFactory>(registry_, "BatchQueue");
   reg_async<asyncs::DualReaderBatchQueueFactory>(registry_, "DualReaderBatchQueue");
+  reg_async<asyncs::PcaDecompositionQueueFactory>(registry_, "PcaDecompositionQueue");
   reg_async<asyncs::SlidingAverageFactory>(registry_, "SlidingAverage");
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXY", xy_processed_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXZ", xz_processed_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorYZ", yz_processed_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXYRaw", xy_raw_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayRawSpectrum", raw_spectrum_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayProcessedSpectrum", processed_spectrum_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmann", shack_hartmann_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmannXcorr", shack_hartmann_xcorr_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorRegistrationXcorr", registration_xcorr_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorZernikePhase", zernike_phase_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayZernikeCoefficientsFactory>(registry_, "DisplayZernikeCoefficients", autofocus_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplaySignalHistoryFactory>(registry_, "DisplaySignalHistory", history_dispatchers_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXY",
+                                                          xy_processed_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXZ",
+                                                          xz_processed_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorYZ",
+                                                          yz_processed_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXYRaw",
+                                                          xy_raw_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayRawSpectrum",
+                                                          raw_spectrum_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayProcessedSpectrum",
+                                                          processed_spectrum_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmann",
+                                                          shack_hartmann_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(
+      registry_, "DisplayTensorShackHartmannXcorr", shack_hartmann_xcorr_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(
+      registry_, "DisplayTensorRegistrationXcorr", registration_xcorr_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorZernikePhase",
+                                                          zernike_phase_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayZernikeCoefficientsFactory>(
+      registry_, "DisplayZernikeCoefficients", autofocus_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplaySignalHistoryFactory>(registry_, "DisplaySignalHistory",
+                                                                 history_dispatchers_);
   reg_sync<sinks::HolofileFactory>(registry_, "HolofileWriter");
   reg_sync<sinks::NpyfileFactory>(registry_, "NpyfileWriter");
   reg_sync<sinks::FfmpegFactory>(registry_, "FfmpegWriter");
@@ -260,8 +274,8 @@ void Manager::register_components() {
                                                           "AmetekS710EuresysCoaxlinkOcto");
   reg_sync<sources::AmetekS711EuresysCoaxlinkQSFPFactory>(registry_,
                                                           "AmetekS711EuresysCoaxlinkQSFP+");
-  reg_sync<sources::AmetekS991EuresysCoaxlinkQSFPFactory>(
-      registry_, "AmetekS991EuresysCoaxlinkQSFP+");
+  reg_sync<sources::AmetekS991EuresysCoaxlinkQSFPFactory>(registry_,
+                                                          "AmetekS991EuresysCoaxlinkQSFP+");
   reg_sync<sources::FresnelQinFactory>(registry_, "FresnelQin");
   reg_sync<sources::FresnelQoutFactory>(registry_, "FresnelQout");
   reg_sync<syncs::AngularSpectrumFactory>(registry_, "AngularSpectrum");
@@ -271,6 +285,7 @@ void Manager::register_components() {
   reg_sync<syncs::FresnelDiffractionFactory>(registry_, "FresnelDiffraction");
   reg_sync<syncs::MemcpyFactory>(registry_, "Memcpy");
   reg_sync<syncs::PcaFactory>(registry_, "Pca");
+  reg_sync<syncs::PcaProjectionFactory>(registry_, "PcaProjection");
   reg_sync<syncs::PctClipFactory>(registry_, "PctClip");
   reg_sync<syncs::CorrectPhaseFactory>(registry_, "CorrectPhase");
   reg_sync<syncs::ConvolutionFactory>(registry_, "Convolution");
@@ -906,15 +921,14 @@ void Manager::build_and_run() {
   Compiler compiler(registry_, config);
   {
     ScopedTrace scope("Compile Pipeline");
-    auto replacement = compiler.compile(spec_);
-    compiler_output_ = std::move(replacement);
+    auto        replacement = compiler.compile(spec_);
+    compiler_output_        = std::move(replacement);
   }
   if (compiler_output_ && !log_root_.empty()) {
     ScopedTrace dump("Dump Compiled Graph");
     holoflow::runtime::dump_compiled_graph_async(log_root_ / "compiled.dot", *compiler_output_,
                                                  graph_compiled_dump_prefs_, "compiled_pipeline");
   }
-
 
   run_compiled_graph();
 }

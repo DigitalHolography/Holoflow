@@ -218,6 +218,7 @@ if(ENABLE_FETCHCONTENT)
         install(
             FILES
                 "${MATHDX_ROOT}/include/cusolverdx.hpp"
+                "${MATHDX_ROOT}/include/cufftdx.hpp"
                 "${MATHDX_ROOT}/include/cusolverdx_io.hpp"
             DESTINATION ${ASSET_ROOT}/mathdx/include
             COMPONENT ${ASSET_COMPONENT}
@@ -225,6 +226,7 @@ if(ENABLE_FETCHCONTENT)
         install(
             DIRECTORY
                 "${MATHDX_ROOT}/include/cusolverdx"
+                "${MATHDX_ROOT}/include/cufftdx"
                 "${MATHDX_ROOT}/include/commondx"
             DESTINATION ${ASSET_ROOT}/mathdx/include
             COMPONENT ${ASSET_COMPONENT}

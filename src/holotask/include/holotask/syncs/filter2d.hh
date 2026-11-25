@@ -25,10 +25,12 @@ namespace holotask::syncs {
 // -------------------------------------------------------------------------------------------------
 
 struct Filter2DSettings {
-  int r_inner;
-  int r_outer;
-  int s_inner;
-  int s_outer;
+  int  r_inner;
+  int  r_outer;
+  int  s_inner;
+  int  s_outer;
+  bool use_fused_f16 = false; ///< Request native F16 FFTs when supported.
+  bool normalize     = false; ///< Divide real output by H*W; required for F16 storage.
 
   bool operator==(const Filter2DSettings &) const = default;
 };

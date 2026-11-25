@@ -24,6 +24,16 @@
       "type": "integer",
       "minimum": 0,
       "description": "Outer slope (smoothness) in pixels (non-negative). Defines the smoothing width around the outer radius."
+    },
+    "normalize": {
+      "type": "boolean",
+      "default": false,
+      "description": "Divide real filter output by spatial image area. Required for F16 input."
+    },
+    "use_fused_f16": {
+      "type": "boolean",
+      "default": false,
+      "description": "Request mixed precision computation when available."
     }
   },
   "required": [

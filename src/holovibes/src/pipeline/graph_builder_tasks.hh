@@ -70,10 +70,11 @@
 #include "holonp/zeros.hh"
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
+#include "holotask/asyncs/pca_decomposition_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
+#include "holotask/sinks/ffmpeg.hh"
 #include "holotask/sinks/holofile.hh"
 #include "holotask/sinks/npyfile.hh"
-#include "holotask/sinks/ffmpeg.hh"
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
 #include "holotask/sources/ametek_s991_euresys_coaxlink_qsfp+.hh"
@@ -131,8 +132,11 @@ protected:
                                              holotask::asyncs::DualReaderBatchQueueSettings s);
   TDesc              convert(const TDesc &X, holotask::syncs::ConversionSettings s);
   TDesc              pca(const TDesc &X, holotask::syncs::PcaSettings s);
-  TDesc              flatfield(const TDesc &X, holotask::syncs::FlatfieldSettings s);
-  TDesc              filter_2d(const TDesc &X, holotask::syncs::Filter2DSettings s);
+  std::vector<TDesc> pca_decomposition_queue(const TDesc                                    &X,
+                                             holotask::asyncs::PcaDecompositionQueueSettings s);
+  TDesc pca_projection(const TDesc &X, const TDesc &Eigenvectors, holotask::syncs::PcaSettings s);
+  TDesc flatfield(const TDesc &X, holotask::syncs::FlatfieldSettings s);
+  TDesc filter_2d(const TDesc &X, holotask::syncs::Filter2DSettings s);
   TDesc fresnel_diffraction(const TDesc &X, holotask::syncs::FresnelDiffractionSettings s);
   TDesc fresnel_qin(const TDesc &Z, holotask::sources::FresnelQinSettings s);
   TDesc fresnel_qout(const TDesc &Z, holotask::sources::FresnelQoutSettings s);
@@ -171,11 +175,10 @@ protected:
   TDesc              wrap2pi(const TDesc &X, holotask::syncs::Wrap2PiSettings s);
   std::vector<TDesc> shack_hartmann_slopes(const TDesc                                &X,
                                            holotask::syncs::ShackHartmannSlopeSettings s);
-  void npyfile_write(const TDesc &X, holotask::sinks::NpyfileSettings s);
-  void ffmpeg_write(const TDesc &X, holotask::sinks::FfmpegSettings s);
-  TDesc resize(const TDesc &X, holotask::syncs::ResizeSettings s);
-  std::vector<TDesc> registration_outputs(
-      const TDesc &X, holotask::syncs::RegistrationSettings s);
+  void               npyfile_write(const TDesc &X, holotask::sinks::NpyfileSettings s);
+  void               ffmpeg_write(const TDesc &X, holotask::sinks::FfmpegSettings s);
+  TDesc              resize(const TDesc &X, holotask::syncs::ResizeSettings s);
+  std::vector<TDesc> registration_outputs(const TDesc &X, holotask::syncs::RegistrationSettings s);
   TDesc zernike_from_slopes(const TDesc &X, holotask::syncs::ZernikeFromSlopesSettings s);
   TDesc zernike_phase(const TDesc &X, holotask::syncs::ZernikePhaseSettings s);
   TDesc concatenate(std::span<const TDesc> Xs, holonp::ConcatenateSettings s);

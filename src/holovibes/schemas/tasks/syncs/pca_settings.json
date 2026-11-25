@@ -14,6 +14,18 @@
       "type": "integer",
       "minimum": 1,
       "description": "Exclusive index of the last eigencomponent to keep. Must satisfy:\n- end > begin\n- end <= number of input features"
+    },
+    "use_fused_f16": {
+      "type": "boolean",
+      "default": false
+    },
+    "output_dtype": {
+      "type": "string",
+      "enum": [
+        "F32",
+        "F16"
+      ],
+      "default": "F32"
     }
   },
   "required": [

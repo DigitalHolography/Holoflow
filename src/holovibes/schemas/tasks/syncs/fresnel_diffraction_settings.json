@@ -30,6 +30,14 @@
       "type": "boolean",
       "default": false,
       "description": "When true, store the magnitude of each propagated complex sample directly from the FFT and return an F32 tensor."
+    },
+    "use_fused_f16": {
+      "type": "boolean",
+      "default": false
+    },
+    "reduce_magnitude": {
+      "type": "boolean",
+      "default": false
     }
   },
   "required": [
@@ -40,10 +48,10 @@
   ],
   "examples": [
     {
-      "lambda": 5.32e-7,
-      "dx": 3.45e-6,
-      "dy": 3.45e-6,
-      "z": 0.10,
+      "lambda": 5.32e-07,
+      "dx": 3.45e-06,
+      "dy": 3.45e-06,
+      "z": 0.1,
       "skip_phase_shift": true,
       "output_magnitude": false
     }

@@ -19,6 +19,16 @@ by the delayed path.
 The input may contain multiple frames on its leading axis. Consumer outputs always have a leading
 dimension of one, preserving one-frame downstream cadence while allowing batched producer writes.
 
+## CUDA iteration pre-queuing
+
+The consumer supports two reserved groups, each retaining both current and delayed views until
+downstream GPU work completes. Reservations use private read positions; only FIFO retirement
+returns storage to the producer. Startup scratch output, frame alignment, and capacity are unchanged.
+
+CUDA-graph sections can use this mode when the host validity output is unconnected. Sections
+consuming that shared scalar retain serial scheduling. The producer continues to use the ordinary
+acquire/push protocol.
+
 ## Settings
 
 - `target_capacity`: producer/consumer headroom beyond the retained delay; must be positive.

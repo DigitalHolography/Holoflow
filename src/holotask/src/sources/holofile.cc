@@ -187,6 +187,10 @@ public:
   }
 
   // -- ISyncTask interface ------------------------------------------------------------------------
+  bool supports_prequeued_execution() const noexcept override {
+    return settings.load_kind != HolofileSettings::LoadKind::Live && !settings.max_fps.has_value();
+  }
+
   std::optional<holoflow::core::TView> acquire_input(int index) override {
     (void)index; // Unused since there are no inputs
     throw std::out_of_range("Holofile task has no inputs");
@@ -229,6 +233,7 @@ public:
       auto *odata = reinterpret_cast<uint8_t *>(ctx.outputs[0].data());
       reader->read_frames(odata, settings.batch_size);
     } else {
+      // Cached storage starts at start_frame, not at frame zero of the original file.
       std::byte *data    = buf + (frame_idx - settings.start_frame) * bytes_per_frame;
       auto      &storage = storage_access().owned_output_storage(0);
       storage.ptr        = data;

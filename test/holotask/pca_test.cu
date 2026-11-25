@@ -17,15 +17,17 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <cuda_fp16.h>
+#include <random>
 #include <vector>
 
 #include <spdlog/spdlog.h>
 
+#include "../../src/holotask/src/pca_capture.hh"
 #include "curaii/cuda.hh"
 #include "holoflow/core/tasks.hh"
 #include "holoflow/core/tensor.hh"
 #include "holotask/syncs/pca.hh"
-#include "../../src/holotask/src/pca_capture.hh"
 
 #include "sync_task_runner.hh"
 #include "tensor_test_buffer.hh"
@@ -273,7 +275,7 @@ TEST_F(PcaExecuteTest, CudaGraphCachesRotatingInputAndOutputBuffers) {
   EXPECT_NEAR(dot(replayed_b.data() + 2, replayed_b.data() + 2, 2), 16.0f, 5e-2f);
 }
 
-TEST_F(PcaExecuteTest, ParticipatesInOuterCaptureForDxAndCusolverPaths) {
+TEST_F(PcaExecuteTest, QueuesOuterGraphsWithoutHostWaitForDxAndCusolverPaths) {
   for (const size_t depth : {size_t{2}, size_t{256}}) {
     const TDesc        input_desc = device_desc({depth, 1, depth});
     const auto         config     = settings(static_cast<int>(depth - 1), static_cast<int>(depth));
@@ -283,31 +285,48 @@ TEST_F(PcaExecuteTest, ParticipatesInOuterCaptureForDxAndCusolverPaths) {
     task->bind_logger(spdlog::default_logger());
     holonp_test::TensorTestBuffer input(input_desc);
     holonp_test::TensorTestBuffer output(inferred.output_descs[0]);
+    holonp_test::TensorTestBuffer next_input(input_desc);
+    holonp_test::TensorTestBuffer next_output(inferred.output_descs[0]);
     input.upload(as_bytes(diagonal_covariance_input(depth)));
+    next_input.upload(as_bytes(diagonal_covariance_input(depth, 2.0f)));
     std::array              inputs{input.view()};
     std::array              outputs{output.view()};
     std::atomic<bool>       cancelled{false};
     holoflow::core::SyncCtx ctx{inputs, outputs, &cancelled, nullptr, nullptr};
 
-    cudaGraph_t graph = holotask::detail::capture_cuda_graph(stream.get(), [&] {
-      EXPECT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
-    });
-    cudaGraphExec_t executable = nullptr;
-    CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable, graph, 0));
-    CUDA_CHECK(cudaGraphLaunch(executable, stream.get()));
+    std::array<cudaGraph_t, 2>     graphs{};
+    std::array<cudaGraphExec_t, 2> executables{};
+    for (size_t i = 0; i < graphs.size(); ++i) {
+      if (i == 1) {
+        inputs[0]  = next_input.view();
+        outputs[0] = next_output.view();
+      }
+      graphs[i] = holotask::detail::capture_cuda_graph(
+          stream.get(), [&] { EXPECT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok); });
+      CUDA_CHECK(cudaGraphInstantiateWithFlags(&executables[i], graphs[i], 0));
+    }
+    // Both variants share the task's workspace. Stream ordering must protect it without a
+    // host barrier between launches, just as in a prequeued scheduler section.
+    CUDA_CHECK(cudaGraphLaunch(executables[0], stream.get()));
+    CUDA_CHECK(cudaGraphLaunch(executables[1], stream.get()));
     CUDA_CHECK(cudaStreamSynchronize(stream.get()));
     const auto captured = as_floats(output.download());
     EXPECT_NEAR(dot(captured.data(), captured.data(), captured.size()), static_cast<float>(depth),
                 5e-2f * depth);
-    CUDA_CHECK(cudaGraphExecDestroy(executable));
-    CUDA_CHECK(cudaGraphDestroy(graph));
+    const auto next_captured = as_floats(next_output.download());
+    EXPECT_NEAR(dot(next_captured.data(), next_captured.data(), next_captured.size()), 4.0f * depth,
+                5e-2f * depth);
+    for (size_t i = 0; i < graphs.size(); ++i) {
+      CUDA_CHECK(cudaGraphExecDestroy(executables[i]));
+      CUDA_CHECK(cudaGraphDestroy(graphs[i]));
+    }
   }
 }
 
 TEST(PcaCaptureCleanup, PreservesFailureAndRestoresStreamAfterInvalidation) {
-  const auto desc = device_desc({2});
+  const auto                    desc = device_desc({2});
   holonp_test::TensorTestBuffer buffer(desc);
-  curaii::CudaStream stream;
+  curaii::CudaStream            stream;
   for (const bool invalidate : {false, true}) {
     try {
       (void)holotask::detail::capture_cuda_graph(stream.get(), [&] {
@@ -329,9 +348,10 @@ TEST(PcaCaptureCleanup, PreservesFailureAndRestoresStreamAfterInvalidation) {
     EXPECT_EQ(as_floats(buffer.download()), (std::vector<float>{0.0F, 0.0F}));
   }
   // Exercise failure from EndCapture itself, rather than a thrown callback.
-  EXPECT_THROW((void)holotask::detail::capture_cuda_graph(stream.get(), [&] {
-    EXPECT_NE(cudaStreamSynchronize(stream.get()), cudaSuccess);
-  }), curaii::CudaError);
+  EXPECT_THROW(
+      (void)holotask::detail::capture_cuda_graph(
+          stream.get(), [&] { EXPECT_NE(cudaStreamSynchronize(stream.get()), cudaSuccess); }),
+      curaii::CudaError);
   cudaStreamCaptureStatus status{};
   CUDA_CHECK(cudaStreamIsCapturing(stream.get(), &status));
   EXPECT_EQ(status, cudaStreamCaptureStatusNone);
@@ -388,4 +408,21 @@ TEST_F(PcaExecuteTest, ReusesCompiledTaskWhenComponentSelectionChanges) {
   const auto reconfigured = execute_once(*task, input, output, stream.get());
   ASSERT_EQ(reconfigured.size(), 2);
   EXPECT_NEAR(dot(reconfigured.data(), reconfigured.data(), reconfigured.size()), 1.0f, 2e-2f);
+}
+
+TEST(PcaF16Production, BatchedU8InputProducesHalfProjections) {
+  const TDesc            input_desc = device_desc({4, 32, 320, 512}, DType::U8);
+  std::vector<std::byte> input(input_desc.num_bytes());
+  std::mt19937           rng(42);
+  for (auto &v : input)
+    v = std::byte(rng() % 256);
+  holotask::syncs::PcaFactory        factory;
+  const holotask::syncs::PcaSettings config{0, 16, true, DType::F16};
+  const auto                         result = holonp_test::run_sync_factory(
+      factory, std::vector<TDesc>{input_desc}, std::vector<std::vector<std::byte>>{input}, config);
+  ASSERT_EQ(result.output_bytes[0].size(), size_t(4 * 16 * 320 * 512 * 2));
+  std::vector<__half> output(result.output_bytes[0].size() / 2);
+  std::memcpy(output.data(), result.output_bytes[0].data(), result.output_bytes[0].size());
+  EXPECT_TRUE(std::all_of(output.begin(), output.end(),
+                          [](auto v) { return std::isfinite(__half2float(v)); }));
 }

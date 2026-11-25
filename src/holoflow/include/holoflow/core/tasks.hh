@@ -45,8 +45,8 @@
 /// @section ownership Ownership
 /// - Acquire/release apply only to indices marked owned by factory inference.
 /// - Calling acquire/release on non-owned indices is undefined.
-/// - At most one acquired input group and one unreleased output group exist at
-///   a time under SPSC assumptions.
+/// - The legacy lifecycle allows one acquired input group and one unreleased output group.
+///   Opt-in async reservation operations allow up to two groups on each SPSC side.
 /// - @todo Define policy for discarding an acquired input on cancellation
 ///   before use (abort API vs implicit discard vs push-then-drop vs aggregation
 ///   commit).
@@ -263,6 +263,14 @@ public:
   /// Opt-in promise: fixed bindings/configuration replay correctly without host-side execution,
   /// events, control results, or ownership publication. GPU-side state/conditionals are allowed.
   [[nodiscard]] virtual bool supports_cuda_graph() const noexcept { return false; }
+  /// execute() can submit a bounded iteration without host waits or control results other than
+  /// Ok. Work must be ordered on the section stream. Owned outputs must support two outstanding
+  /// views and FIFO release with the retired view rebound by the scheduler. Once submission
+  /// starts, cancellation is suppressed until the complete iteration has been enqueued.
+  /// Graph-recordable tasks satisfy this by default; tasks may explicitly decline.
+  [[nodiscard]] virtual bool supports_prequeued_execution() const noexcept {
+    return supports_cuda_graph();
+  }
   /// Append work to the current top-level graph, never launch or embed a task-local graph.
   virtual void record_cuda_graph(CudaGraphCtx &ctx);
 
@@ -270,6 +278,9 @@ public:
   // It is called for each task after a cancel request
   virtual void cancel(SyncCtx &ctx) { (void)ctx; }
 };
+
+/// Opaque reservation identifier, local to one task and one producer/consumer side.
+using AsyncTicket = uint64_t;
 
 /// @brief Interface for asynchronous (decoupled) tasks.
 ///
@@ -306,6 +317,24 @@ public:
   // handle cancel properly
   // It is called for each task after a cancel request
   virtual void cancel() {}
+  /// Optional double-buffered ownership protocol, independent of the legacy methods above.
+  /// One producer thread and one consumer thread may each hold up to two tickets. Reservations
+  /// bind the compiler-provided Storage, but never publish writes or release reads. NotReady and
+  /// Cancelled leave no reservation. The caller snapshots bindings before reserving again.
+  /// Never mix legacy and reserved operations on the same side while tickets are outstanding.
+  [[nodiscard]] virtual OpResult reserve_push(AsyncPushCtx &, AsyncTicket &);
+  /// Append producer CUDA work after upstream work on producer_stream; never synchronize or
+  /// cancel after submission. Called exactly once for a successfully reserved ticket.
+  virtual void enqueue_push(AsyncTicket);
+  /// After GPU completion, publish the oldest submitted ticket. Must not change Storage bindings.
+  virtual void commit_push(AsyncTicket);
+  /// Cancel the newest, not-yet-submitted producer reservation.
+  virtual void                   cancel_push(AsyncTicket);
+  [[nodiscard]] virtual OpResult reserve_pop(AsyncPopCtx &, AsyncTicket &);
+  /// After GPU consumption, return the oldest output reservation without changing bindings.
+  virtual void release_pop(AsyncTicket);
+  /// Cancel the newest output reservation before submitting its downstream work.
+  virtual void cancel_pop(AsyncTicket);
 };
 
 /// Describes an in-place link between an input and output tensor.
@@ -356,6 +385,8 @@ struct InferResult {
   /// Optional per-port counts. An empty vector or nullopt entry means unknown.
   std::vector<std::optional<size_t>> owned_input_pointer_counts;
   std::vector<std::optional<size_t>> owned_output_pointer_counts;
+  bool supports_prequeued_push = false; ///< Implements the reserved producer protocol.
+  bool supports_prequeued_pop  = false; ///< Implements the reserved consumer protocol.
 };
 
 /// Controls how dependent executables are invalidated during a task update.

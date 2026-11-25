@@ -172,6 +172,22 @@ std::vector<GraphBuilderTasks::TDesc> GraphBuilderTasks::histogram(const TDesc  
 }
 
 std::vector<GraphBuilderTasks::TDesc>
+GraphBuilderTasks::pca_decomposition_queue(const TDesc                                    &X,
+                                           holotask::asyncs::PcaDecompositionQueueSettings s) {
+  return make_unary_async_node("pca_decomposition_queue", "PcaDecompositionQueue",
+                               "PcaDecompositionQueue", X, s);
+}
+
+GraphBuilderTasks::TDesc GraphBuilderTasks::pca_projection(const TDesc &X,
+                                                           const TDesc &Eigenvectors,
+                                                           holotask::syncs::PcaSettings s) {
+  const std::array<TDesc, 2> inputs{X, Eigenvectors};
+  return std::move(make_nary_sync_node("pca_projection", "PcaProjection", "PcaProjection",
+                                       std::span<const TDesc>{inputs}, s)
+                       .at(0));
+}
+
+std::vector<GraphBuilderTasks::TDesc>
 GraphBuilderTasks::dual_reader_batch_queue(const TDesc                                   &X,
                                            holotask::asyncs::DualReaderBatchQueueSettings s) {
   return make_unary_async_node("dual_reader_batch_queue", "DualReaderBatchQueue",
@@ -258,8 +274,7 @@ std::vector<GraphBuilderTasks::TDesc> GraphBuilderTasks::meshgrid(std::span<cons
 }
 
 std::vector<GraphBuilderTasks::TDesc>
-GraphBuilderTasks::registration_outputs(const TDesc &X,
-                                        holotask::syncs::RegistrationSettings s) {
+GraphBuilderTasks::registration_outputs(const TDesc &X, holotask::syncs::RegistrationSettings s) {
   return make_unary_sync_node("registration", "Registration", "Registration", X, s);
 }
 
@@ -337,9 +352,8 @@ void GraphBuilderTasks::holofile_write(const TDesc &X, holotask::sinks::Holofile
 
   auto      &factory     = reg_.get_sync(std::string{reg_key});
   const auto core_inputs = to_core_descs(std::span{&X, 1});
-  (void)infer_node(v, std::span{&X, 1}, [&] {
-    return factory.infer(core_inputs, nlohmann::json(s));
-  });
+  (void)infer_node(v, std::span{&X, 1},
+                   [&] { return factory.infer(core_inputs, nlohmann::json(s)); });
 }
 
 void GraphBuilderTasks::npyfile_write(const TDesc &X, holotask::sinks::NpyfileSettings s) {

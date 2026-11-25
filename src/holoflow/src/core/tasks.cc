@@ -55,6 +55,28 @@ void ISyncTask::record_cuda_graph(CudaGraphCtx &) {
   throw std::logic_error("Task does not support CUDA graph recording");
 }
 
+OpResult IAsyncTask::reserve_push(AsyncPushCtx &, AsyncTicket &) {
+  throw std::logic_error("Task does not support prequeued pushes");
+}
+void IAsyncTask::enqueue_push(AsyncTicket) {
+  throw std::logic_error("Task does not support prequeued pushes");
+}
+void IAsyncTask::commit_push(AsyncTicket) {
+  throw std::logic_error("Task does not support prequeued pushes");
+}
+void IAsyncTask::cancel_push(AsyncTicket) {
+  throw std::logic_error("Task does not support prequeued pushes");
+}
+OpResult IAsyncTask::reserve_pop(AsyncPopCtx &, AsyncTicket &) {
+  throw std::logic_error("Task does not support prequeued pops");
+}
+void IAsyncTask::release_pop(AsyncTicket) {
+  throw std::logic_error("Task does not support prequeued pops");
+}
+void IAsyncTask::cancel_pop(AsyncTicket) {
+  throw std::logic_error("Task does not support prequeued pops");
+}
+
 std::optional<TView> ITask::acquire_input(int) {
   throw std::out_of_range("Input index out of range");
 }

@@ -11,9 +11,11 @@
         "U8",
         "U16",
         "F32",
-        "CF32"
+        "CF32",
+        "F16",
+        "CF16"
       ],
-      "description": "Desired output data type. Accepted values:\n- U8: 8-bit unsigned integer\n- U16: 16-bit unsigned integer\n- F32: 32-bit float\n- CF32: 32-bit complex float"
+      "description": "Desired output data type. Accepted values:\n- U8: 8-bit unsigned integer\n- U16: 16-bit unsigned integer\n- F32: 32-bit float\n- CF32: 32-bit complex float\n- F16: IEEE binary16 float\n- CF16: interleaved binary16 complex components"
     },
     "strategy": {
       "type": "string",

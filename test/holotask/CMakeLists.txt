@@ -27,10 +27,13 @@ set(SOURCES
     npyfile_sink_test.cc
     resize_test.cc
     normalize_test.cu
+    ordinary_prequeue_test.cc
     pca_test.cu
+    pca_pipeline_test.cu
     pct_clip_test.cu
     shack_hartmann_test.cu
     sliding_average_test.cu
+    prequeue_test.cu
     section_cuda_graph_reference_test.cu
     zernike_defocus_z_prop_test.cc
     zernike_phase_test.cu

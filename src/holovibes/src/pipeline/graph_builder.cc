@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "graph_builder.hh"
+#include "precision_options.hh"
 
 #include <algorithm>
 #include <array>
@@ -80,6 +81,7 @@ private:
   void build_raw_record(const TDesc &H);
   bool build_raw_view(const TDesc &H);
   TDesc build_preprocessing(TDesc H);
+  bool fused_spatial_mean_ = false;
   TDesc build_time_frequency_analysis(TDesc H);
   TDesc build_aberration_correction(const TDesc &FH_current, const TDesc &FH_delayed);
   TDesc build_aberration_correction_pass(const TDesc &FH_current, const TDesc &FH_delayed, bool is_last_pass, AberrationCorrectionState &state);
@@ -300,11 +302,19 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_preprocessing(TDesc H) {
     H = batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_window});
   }
 
+  if (enable_f16_pca && !s_.fresnel_use_numpy &&
+      s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS &&
+      s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION && s_.moment_type == MomentType::M0 &&
+      !s_.view_3d_cuts && (!s_.filter_2d || enable_f16_filter2d) &&
+      H.dtype == holoflow::core::DType::U8 && H.shape == std::vector<size_t>{32, 320, 512} &&
+      s_.time_z_end - s_.time_z_begin <= 16)
+    // The input and PCA queues both own their buffers. Keep a device copy between them.
+    return memcpy(H, {Device});
   return convert(H, {Target::F32, Strat::Real});
 }
 
 GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_time_frequency_analysis(TDesc H) {
-  // H enters as [T, Hy, Hx] (F32).
+  // H enters as [T, Hy, Hx] (F32 or U8 for fused PCA).
   // We first accumulate N_pre such windows into a batch, producing [N_pre, T, Hy, Hx].
   // Time-frequency analysis then operates along axis 1 (the T dimension).
   // The output is [N_pre, Nz, Hy, Hx], which feeds directly into the post-TFA queue.
@@ -315,6 +325,20 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_time_frequency_analysis(TDes
   int64_t Hx    = static_cast<int64_t>(H.shape.at(2));
 
   H = reshape(H, {{1, T, Hy, Hx}, false});
+
+  if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
+    // Keep the four-window grouping, but retain X and eigenvectors together through projection.
+    // The decomposition queue overlaps producer covariance and consumer projection with HEEV.
+    const auto decomposition = pca_decomposition_queue(
+        H, {static_cast<size_t>(N_pre), 3, H.dtype == holoflow::core::DType::U8});
+    const int z0 = s_.view_3d_cuts ? 0 : s_.time_z_begin;
+    const int z1 = s_.view_3d_cuts ? static_cast<int>(T) : s_.time_z_end;
+    return pca_projection(decomposition.at(0), decomposition.at(1),
+                          {z0, z1, H.dtype == holoflow::core::DType::U8,
+                           H.dtype == holoflow::core::DType::U8 ? holoflow::core::DType::F16
+                                                                : holoflow::core::DType::F32});
+  }
+
   H = batched_queue(H, {N_pre * 2, N_pre, N_pre}); // [N_pre, T, Hy, Hx]
 
   if (s_.time_method == TimeMethod::RFFT) {
@@ -347,16 +371,6 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_time_frequency_analysis(TDes
     auto FH_neg    = slice(FH, {{{}, neg_range, {}, {}}});
 
     FH = concatenate(std::array<TDesc, 2>{FH_pos, FH_neg}, {1});
-    return FH;
-  }
-
-  if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
-    // PCA natively supports arbitrary leading batch dimensions (rank >= 3).
-    // Input H: [N_pre, T, Hy, Hx] — the feature axis is shape[-3] = T.
-    // Output FH: [N_pre, Nz, Hy, Hx] where Nz = z1 - z0.
-    int  z0 = s_.view_3d_cuts ? 0 : s_.time_z_begin;
-    int  z1 = s_.view_3d_cuts ? static_cast<int>(T) : s_.time_z_end;
-    auto FH = pca(H, {z0, z1});
     return FH;
   }
 
@@ -549,9 +563,21 @@ GraphBuilder::Impl::build_zernike_correction(const TDesc &FH, const TDesc &slope
   auto F32    = holoflow::core::DType::F32;
   auto Device = holoflow::core::MemLoc::Device;
 
+  bool output_cf16 = false;
+  if (enable_cf16_correction && enable_f16_fresnel && is_last_pass && s_.autofocus_nb_iter == 1 &&
+      FH.dtype == holoflow::core::DType::F16) {
+    int device = 0, major = 0, minor = 0;
+    output_cf16 =
+        cudaGetDevice(&device) == cudaSuccess &&
+        cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device) == cudaSuccess &&
+        cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device) == cudaSuccess &&
+        major == 12 && minor == 0;
+  }
+  const holotask::syncs::CorrectPhaseSettings correction{.output_cf16 = output_cf16};
+
   if (s_.autofocus_zernike_orders.empty()) {
     auto phase     = zeros({{1, geometry.frame_height, geometry.frame_width}, F32});
-    auto corrected = correct_phase(FH, phase, {});
+    auto corrected = correct_phase(FH, phase, correction);
 
     if (is_last_pass && s_.view_zernike_phase) {
       zernike_phase_display(phase, {});
@@ -578,7 +604,7 @@ GraphBuilder::Impl::build_zernike_correction(const TDesc &FH, const TDesc &slope
   auto height    = static_cast<int>(geometry.frame_height);
   auto width     = static_cast<int>(geometry.frame_width);
   auto phase     = zernike_phase(coeffs, {s_.autofocus_zernike_orders, height, width, Device});
-  auto corrected = correct_phase(FH, phase, {});
+  auto corrected = correct_phase(FH, phase, correction);
 
   const auto accumulate = [this](auto &cumulative, const auto &value) {
     cumulative = cumulative ? add(*cumulative, value, {}) : value;
@@ -663,12 +689,20 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_propagation(const TD
     if (s_.fresnel_use_numpy) {
       return fresnel_diffraction_numpy(FH);
     }
+    const bool use_half =
+        enable_f16_fresnel && s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS &&
+        (!s_.autofocus_enabled || FH.dtype == holoflow::core::DType::CF16) && !s_.view_3d_cuts &&
+        (!s_.filter_2d || enable_f16_filter2d) && s_.moment_type == MomentType::M0 &&
+        FH.shape[FH.rank() - 2] == 320 && FH.shape.back() == 512;
+    fused_spatial_mean_ = use_half && fuse_fresnel_mean;
     return fresnel_diffraction(FH, {.lambda           = s_.spacial_lambda,
                                     .dx               = s_.spacial_pixel_size,
                                     .dy               = s_.spacial_pixel_size,
                                     .z                = s_.spacial_z,
                                     .axes             = {-2, -1},
-                                    .output_magnitude = true});
+                                    .output_magnitude = true,
+                                    .use_fused_f16    = use_half,
+                                    .reduce_magnitude = fused_spatial_mean_});
   }
 
   if (s_.spacial_method == SpacialMethod::ANGULAR_SPECTRUM) {
@@ -747,12 +781,23 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::fresnel_diffraction_numpy(const TD
 }
 
 GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_filter(const TDesc &FH_z) {
-  return filter_2d(FH_z, {
-                             s_.filter_r_inner,
-                             s_.filter_r_outer,
-                             s_.filter_smooth_inner,
-                             s_.filter_smooth_outer,
-                         });
+  const bool half_storage = FH_z.dtype == holoflow::core::DType::F16;
+  bool       native       = false;
+  if (enable_f16_filter2d && half_storage) {
+    int device = 0, major = 0, minor = 0;
+    // The native FFTs met the FP32 performance gate on SM120.
+    native =
+        cudaGetDevice(&device) == cudaSuccess &&
+        cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device) == cudaSuccess &&
+        cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device) == cudaSuccess &&
+        major == 12 && minor == 0;
+  }
+  return filter_2d(FH_z, {.r_inner       = s_.filter_r_inner,
+                          .r_outer       = s_.filter_r_outer,
+                          .s_inner       = s_.filter_smooth_inner,
+                          .s_outer       = s_.filter_smooth_outer,
+                          .use_fused_f16 = native,
+                          .normalize     = half_storage});
 }
 
 GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_freq_weights() {
@@ -795,7 +840,9 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
   const bool is_magnitude = FH_z.dtype == holoflow::core::DType::F32;
 
   if (s_.moment_type == MomentType::M0) {
-    result = is_magnitude ? mean(FH_z, {{-3}, true}) : mean_abs(FH_z, {{-3}, true});
+    result = fused_spatial_mean_
+                 ? FH_z
+                 : (is_magnitude ? mean(FH_z, {{-3}, true}) : mean_abs(FH_z, {{-3}, true}));
   }
 
   else if (s_.moment_type == MomentType::M1) {
@@ -835,12 +882,12 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
   result = mean(result, {{0}, false}); // [1, H, W]
 
   if (s_.pp_registration) {
-    const auto outputs = registration_outputs(result, {.radius = s_.pp_registration_radius});
-    result = outputs.at(0);
+    const auto outputs  = registration_outputs(result, {.radius = s_.pp_registration_radius});
+    result              = outputs.at(0);
     auto output_display = fftshift(outputs.at(1), {{-2, -1}});
     // Match the Shack-Hartmann correlation preview. The registration output is a raw F32
     // correlation matrix and must be normalized before conversion to U8 for display.
-    output_display = normalize(output_display, {{-2, -1}, 0.0f, 255.0f});
+    output_display              = normalize(output_display, {{-2, -1}, 0.0f, 255.0f});
     const auto output_converted = convert(output_display, {Target::U8, Strat::Scaled});
 
     registration_xcorr_display(output_converted, {});
