@@ -129,6 +129,9 @@ private:
   void    save_persistent_state();
   void    restore_persistent_state();
   QString sanitize_recording_token(const QString &value) const;
+  QString find_patient(QString name) const;
+  QString find_date(QString name) const;
+  QString find_eye(QString name) const;
   QString recording_file_name(int acquisition_id) const;
   QString acquisition_label(int acquisition_id) const;
   void    update_acquisition_label();

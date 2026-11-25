@@ -35,6 +35,7 @@ public:
   QString get_codec() const;
   QString get_resize_algorithm() const;
   QString get_file_path() const;
+  QString get_file_name_template() const;
   QString get_tag() const;
   bool    is_frame_count_enabled() const;
   int     get_frame_count() const;
@@ -43,6 +44,7 @@ public:
 
   // Setters
   void set_file_path(const QString &path);
+  void set_file_name_template(const QString &name);
   void set_frame_count(int count);
   void set_frame_batch_size(int batch_size);
   void set_image_type(const QString &type);
@@ -64,6 +66,7 @@ public:
   QComboBox   *codec_combo();
   QComboBox   *resize_algorithm_combo();
   QLineEdit   *file_line_edit();
+  QLineEdit   *file_name_template_edit();
   QPushButton *browse_button();
   QComboBox   *tag_combo();
   QCheckBox   *frames_check();
@@ -94,6 +97,7 @@ private:
   QComboBox   *codec_combo_;
   QComboBox   *resize_algorithm_combo_;
   QLineEdit   *file_line_edit_;
+  QLineEdit   *file_name_template_edit_;
   QPushButton *browse_button_;
   QComboBox   *tag_combo_;
   QCheckBox   *frames_check_;

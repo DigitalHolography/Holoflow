@@ -56,6 +56,7 @@ QString ExportWidget::get_resize_algorithm() const {
   return resize_algorithm_combo_->currentData().toString();
 }
 QString ExportWidget::get_file_path() const { return file_line_edit_->text(); }
+QString ExportWidget::get_file_name_template() const { return file_name_template_edit_->text(); }
 QString ExportWidget::get_tag() const { return tag_combo_->currentText(); }
 bool    ExportWidget::is_frame_count_enabled() const { return frames_check_->isChecked(); }
 int     ExportWidget::get_frame_count() const { return frames_spin_->value(); }
@@ -63,6 +64,9 @@ int     ExportWidget::get_queue_count() const { return queues_spin_->value(); }
 bool    ExportWidget::isChecked() const { return enable_check_->isChecked(); }
 
 void ExportWidget::set_file_path(const QString &path) { file_line_edit_->setText(path); }
+void ExportWidget::set_file_name_template(const QString &name) {
+  file_name_template_edit_->setText(name);
+}
 void ExportWidget::set_frame_count(int count) { frames_spin_->setValue(count); }
 void ExportWidget::set_frame_batch_size(int batch_size) {
   frame_batch_size_ = std::max(1, batch_size);
@@ -90,6 +94,7 @@ QComboBox   *ExportWidget::format_combo() { return format_combo_; }
 QComboBox   *ExportWidget::codec_combo() { return codec_combo_; }
 QComboBox   *ExportWidget::resize_algorithm_combo() { return resize_algorithm_combo_; }
 QLineEdit   *ExportWidget::file_line_edit() { return file_line_edit_; }
+QLineEdit   *ExportWidget::file_name_template_edit() { return file_name_template_edit_; }
 QPushButton *ExportWidget::browse_button() { return browse_button_; }
 QComboBox   *ExportWidget::tag_combo() { return tag_combo_; }
 QCheckBox   *ExportWidget::frames_check() { return frames_check_; }
@@ -146,6 +151,16 @@ void ExportWidget::setup_ui() {
   resize_algorithm_combo_->setToolTip(
       "Algorithm used when exporting video with square resizing enabled.");
   layout->addWidget(resize_algorithm_combo_, row, 1);
+  ++row;
+
+  layout->addWidget(new QLabel("File name", content_container_), row, 0);
+  file_name_template_edit_ = new QLineEdit(content_container_);
+  file_name_template_edit_->setText("{patient}_{eye}_{date}");
+  file_name_template_edit_->setToolTip(
+      "File name template (without extension). Available placeholders, case insensitive:\n"
+      "{patient}: patient field\n{eye}: eye field\n{date}: YYYYMMDD_HHMMSS.\n"
+      "An acquisition number (AQ001, AQ002, ...) is added; existing names are skipped.");
+  layout->addWidget(file_name_template_edit_, row, 1);
   ++row;
 
   file_line_edit_ = new QLineEdit(content_container_);
