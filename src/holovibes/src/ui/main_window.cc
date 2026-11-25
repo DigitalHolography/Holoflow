@@ -875,10 +875,11 @@ void MainWindow::setup_main_layout() {
   session_layout->addWidget(update_indicator_);
   main_layout->addWidget(session_bar, 0);
 
-  render_widget_ = new ImageRenderingWidget(this);
-  view_widget_   = new ViewWidget(this);
-  import_widget_ = new ImportWidget(this);
-  export_widget_ = new ExportWidget(this);
+  render_widget_          = new ImageRenderingWidget(this);
+  pipeline_queues_widget_ = new PipelineQueuesWidget(this);
+  view_widget_            = new ViewWidget(this);
+  import_widget_          = new ImportWidget(this);
+  export_widget_          = new ExportWidget(this);
 
   auto *command_bar = new QFrame(central_widget);
   command_bar->setObjectName("commandBar");
@@ -962,6 +963,7 @@ void MainWindow::setup_main_layout() {
   processing_layout->setContentsMargins(0, 0, 0, 0);
   processing_layout->setSpacing(12);
   processing_layout->addWidget(render_widget_);
+  processing_layout->addWidget(pipeline_queues_widget_);
   processing_layout->addWidget(render_widget_->autofocus_widget());
   processing_layout->addStretch(1);
 
@@ -2703,12 +2705,15 @@ void MainWindow::setup_validation_connections() {
   connect(import_widget_, &ImportWidget::settings_changed, this, cb);
   connect(export_widget_, &ExportWidget::settings_changed, this, cb);
   connect(render_widget_, &ImageRenderingWidget::settings_changed, this, cb);
+  connect(pipeline_queues_widget_, &PipelineQueuesWidget::settings_changed, this, cb);
   connect(view_widget_, &ViewWidget::settings_changed, this, cb);
   connect(display_workspace_, &VisualizationWorkspace::visualization_preferences_changed, this, cb);
 
   connect(import_widget_, &ImportWidget::settings_changed, this, &MainWindow::refresh_command_bar);
   connect(export_widget_, &ExportWidget::settings_changed, this, &MainWindow::refresh_command_bar);
   connect(render_widget_, &ImageRenderingWidget::settings_changed, this,
+          &MainWindow::refresh_command_bar);
+  connect(pipeline_queues_widget_, &PipelineQueuesWidget::settings_changed, this,
           &MainWindow::refresh_command_bar);
   connect(view_widget_, &ViewWidget::settings_changed, this, &MainWindow::refresh_command_bar);
   connect(display_workspace_, &VisualizationWorkspace::visualization_preferences_changed, this,
@@ -2728,6 +2733,7 @@ void MainWindow::setup_update_connections() {
           [this]() { record_widget_->reset(export_widget_->get_queue_count()); });
 
   connect(render_widget_, &ImageRenderingWidget::settings_changed, this, cb);
+  connect(pipeline_queues_widget_, &PipelineQueuesWidget::settings_changed, this, cb);
   connect(view_widget_, &ViewWidget::settings_changed, this, cb);
   connect(display_workspace_, &VisualizationWorkspace::visualization_preferences_changed, this, cb);
 
@@ -2847,11 +2853,12 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
 
   // Advanced Settings
   {
-    s.cpu_in_size  = 1024; // TODO unused ?
-    s.gpu_in_size  = 16;
-    s.cpu_rec_size = 1024; // TODO unused ?
-    s.cpu_out_size = 4;
-    s.gpu_out_size = 2;
+    s.cpu_in_size       = 1024; // TODO unused ?
+    s.gpu_in_size       = pipeline_queues_widget_->get_gpu_in_queue_size();
+    s.cpu_rec_size      = 1024; // TODO unused ?
+    s.cpu_out_size      = pipeline_queues_widget_->get_cpu_out_queue_size();
+    s.gpu_out_size      = pipeline_queues_widget_->get_gpu_out_queue_size();
+    s.queue_sizing_auto = pipeline_queues_widget_->is_queue_sizing_auto();
   }
 
   // Import Settings
@@ -3080,7 +3087,8 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
 
   // --- Advanced Settings ---
   {
-    // (none exposed in UI)
+    pipeline_queues_widget_->set_queue_sizes(s.gpu_in_size, s.gpu_out_size, s.cpu_out_size);
+    pipeline_queues_widget_->set_queue_sizing_auto(s.queue_sizing_auto);
   }
 
   // --- Import Settings ---

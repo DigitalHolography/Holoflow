@@ -36,6 +36,7 @@
 #include "pipeline/validation.hh"
 #include "ui/widgets/export_widget.hh"
 #include "ui/widgets/image_rendering_widget.hh"
+#include "ui/widgets/pipeline_queues_widget.hh"
 #include "ui/widgets/import_widget.hh"
 #include "ui/widgets/record_monitor_widget.hh"
 #include "ui/widgets/system_monitor_widget.hh"
@@ -73,6 +74,7 @@ private:
   ImportWidget                *import_widget_;
   ExportWidget                *export_widget_;
   ImageRenderingWidget        *render_widget_;
+  PipelineQueuesWidget        *pipeline_queues_widget_;
   ViewWidget                  *view_widget_;
   SystemMonitorWidget         *monitor_widget_;
   RecordMonitorWidget         *record_widget_;

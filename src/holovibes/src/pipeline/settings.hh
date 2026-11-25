@@ -72,6 +72,7 @@ struct Settings {
   int cpu_rec_size;
   int cpu_out_size;
   int gpu_out_size;
+  bool queue_sizing_auto = false;
   int time_accumulation;
 
   // Import

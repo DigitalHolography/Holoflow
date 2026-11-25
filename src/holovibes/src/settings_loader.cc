@@ -102,6 +102,8 @@ void write_advanced(json &j, const Settings &s) {
   advanced["buffer_size"]["input"]  = s.gpu_in_size;
   advanced["buffer_size"]["output"] = s.gpu_out_size;
   advanced["buffer_size"]["record"] = s.cpu_rec_size;
+  advanced["buffer_size"]["cpu_output"] = s.cpu_out_size;
+  advanced["buffer_size"]["auto"] = s.queue_sizing_auto;
 
   advanced["filter2d_smooth"]["low"]  = s.filter_smooth_inner;
   advanced["filter2d_smooth"]["high"] = s.filter_smooth_outer;
@@ -203,6 +205,8 @@ void read_advanced(Settings &s, const json &advanced) {
   s.gpu_in_size  = val(buffer_size, "input", s.gpu_in_size);
   s.gpu_out_size = val(buffer_size, "output", s.gpu_out_size);
   s.cpu_rec_size = val(buffer_size, "record", s.cpu_rec_size);
+  s.cpu_out_size = val(buffer_size, "cpu_output", s.cpu_out_size);
+  s.queue_sizing_auto = val(buffer_size, "auto", s.queue_sizing_auto);
 
   s.filter_smooth_inner = val(smooth, "low", s.filter_smooth_inner);
   s.filter_smooth_outer = val(smooth, "high", s.filter_smooth_outer);

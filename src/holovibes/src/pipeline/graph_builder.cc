@@ -17,12 +17,26 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
+#include <functional>
 #include <map>
 #include <numbers>
+#include <numeric>
 #include <optional>
 #include <spdlog/fmt/ranges.h>
+#include <sstream>
 #include <stdexcept>
-#include <utility>
+#include <string>
+#include <vector>
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <cuda_runtime.h>
+#include <windows.h>
 
 #include "bug.hh"
 #include "graph_builder_tasks.hh"
@@ -101,7 +115,44 @@ private:
   TDesc build_freq_weights();
   // clang-format on
 
-  Settings s_;
+  struct QueuePlanEntry {
+    std::string name;
+    bool        device;
+    size_t      depth;
+    size_t      slots;
+    size_t      bytes_per_slot;
+    size_t      extra_bytes;
+    size_t      total_bytes;
+    size_t      floor;
+    size_t      ceiling;
+    size_t      input_batch;
+    size_t      stride;
+    size_t      extra_slots;
+    bool        sliding_average;
+    bool        adjustable;
+    size_t      target_bytes;
+    V           vertex;
+  };
+
+  void   start_queue_plan(size_t frame_bytes);
+  size_t add_queue_plan(std::string name, bool device, size_t requested_depth, size_t minimum_depth,
+                        size_t                               bytes_per_slot,
+                        const std::function<size_t(size_t)> &allocation_bytes,
+                        const std::function<size_t(size_t)> &slot_count, size_t extra_bytes = 0);
+  TDesc  planned_batch_queue(const char *name, const TDesc &desc, size_t requested_depth,
+                             size_t minimum_depth, int output_size, int output_stride);
+  void   finish_queue_plan();
+  [[noreturn]] void throw_queue_plan_error(const std::string &reason) const;
+
+  Settings                    s_;
+  std::vector<QueuePlanEntry> queue_plan_;
+  size_t                      frame_bytes_   = 0;
+  size_t                      free_vram_     = 0;
+  size_t                      total_vram_    = 0;
+  size_t                      free_ram_      = 0;
+  size_t                      total_ram_     = 0;
+  size_t                      vram_headroom_ = 0;
+  size_t                      ram_headroom_  = 0;
 
   std::map<LoadMethod, holotask::sources::HolofileSettings::LoadKind> load_method_map_{
       {LoadMethod::READ_LIVE, holotask::sources::HolofileSettings::LoadKind::Live},
@@ -115,6 +166,36 @@ private:
 // -----------------------------------------------------------------------------
 
 namespace {
+
+constexpr size_t kVramHeadroomMinimum = 256ULL * 1024 * 1024;
+constexpr size_t kRamHeadroomMinimum  = 256ULL * 1024 * 1024;
+constexpr size_t kHeadroomPercent     = 10;
+
+// AUTO sizes each queue from a byte budget: large input frames receive shallow queues, while
+// smaller frames can use more slots up to a queue-specific ceiling. Floors preserve the
+// manual-mode safety capacities and BatchQueue's batch/stride slot-alignment requirements.
+// SlidingAverage also accounts for its window ring and running-average scratch buffer.
+constexpr size_t kGpuInputTargetBytes     = 64ULL * 1024 * 1024;
+constexpr size_t kIntermediateTargetBytes = 16ULL * 1024 * 1024;
+constexpr size_t kDisplayTargetBytes      = 8ULL * 1024 * 1024;
+constexpr size_t kCpuOutputTargetBytes    = 8ULL * 1024 * 1024;
+constexpr size_t kSlidingTargetBytes      = 16ULL * 1024 * 1024;
+
+size_t automatic_queue_depth(size_t bytes_per_frame, size_t target_bytes, size_t floor,
+                             size_t ceiling) {
+  if (bytes_per_frame == 0)
+    return floor;
+  const size_t rounded_depth = (target_bytes + bytes_per_frame / 2) / bytes_per_frame;
+  return std::clamp(rounded_depth, floor, ceiling);
+}
+
+size_t aligned_batch_slots(size_t input_batch, size_t output_stride, size_t target_capacity) {
+  const size_t alignment = std::lcm(input_batch, output_stride);
+  if (alignment == 0)
+    throw std::overflow_error("queue slot alignment overflow");
+  const size_t minimum = std::max(target_capacity, output_stride) + input_batch;
+  return ((minimum + alignment - 1) / alignment) * alignment;
+}
 
 holotask::syncs::FlatfieldSettings flatfield_settings_from_cutoff_period(float cutoff_period_m,
                                                                          float dy_m, float dx_m);
@@ -149,6 +230,160 @@ GraphBuilder::failure_graph_dot(const holoflow::core::GraphSpecDumpPreferences &
 GraphBuilder::Impl::Impl(const Settings &settings, holoflow::core::Registry &registry)
     : GraphBuilderTasks(registry), s_(settings) {}
 
+void GraphBuilder::Impl::start_queue_plan(size_t frame_bytes) {
+  frame_bytes_ = frame_bytes;
+  queue_plan_.clear();
+  size_t            free_vram   = 0;
+  const cudaError_t cuda_status = cudaMemGetInfo(&free_vram, &total_vram_);
+  if (cuda_status != cudaSuccess) {
+    throw std::runtime_error(std::string("cudaMemGetInfo failed: ") +
+                             cudaGetErrorString(cuda_status));
+  }
+  free_vram_ = free_vram;
+  MEMORYSTATUSEX memory_status{};
+  memory_status.dwLength = sizeof(memory_status);
+  if (!GlobalMemoryStatusEx(&memory_status)) {
+    throw std::runtime_error("GlobalMemoryStatusEx failed while planning pipeline queues");
+  }
+  free_ram_      = static_cast<size_t>(memory_status.ullAvailPhys);
+  total_ram_     = static_cast<size_t>(memory_status.ullTotalPhys);
+  vram_headroom_ = std::max(kVramHeadroomMinimum, free_vram_ * kHeadroomPercent / 100);
+  ram_headroom_  = std::max(kRamHeadroomMinimum, free_ram_ * kHeadroomPercent / 100);
+}
+
+size_t GraphBuilder::Impl::add_queue_plan(std::string name, bool device, size_t requested_depth,
+                                          size_t minimum_depth, size_t bytes_per_slot,
+                                          const std::function<size_t(size_t)> &allocation_bytes,
+                                          const std::function<size_t(size_t)> &slot_count,
+                                          size_t                               extra_bytes) {
+  const size_t depth = requested_depth;
+  queue_plan_.push_back({std::move(name),
+                         device,
+                         depth,
+                         slot_count(depth),
+                         bytes_per_slot,
+                         extra_bytes,
+                         allocation_bytes(depth),
+                         minimum_depth,
+                         requested_depth,
+                         1,
+                         1,
+                         0,
+                         true,
+                         false,
+                         0,
+                         {}});
+  return depth;
+}
+
+GraphBuilder::Impl::TDesc
+GraphBuilder::Impl::planned_batch_queue(const char *name, const TDesc &desc, size_t requested_depth,
+                                        size_t minimum_depth, int output_size, int output_stride) {
+  const size_t input_batch  = static_cast<size_t>(desc.shape.at(0));
+  const size_t element_size = desc.num_bytes() / input_batch;
+  const size_t target_bytes =
+      std::string(name).find("GPU input") != std::string::npos   ? kGpuInputTargetBytes
+      : std::string(name).find("display") != std::string::npos   ? kDisplayTargetBytes
+      : std::string(name).find("recording") != std::string::npos ? kCpuOutputTargetBytes
+                                                                 : kIntermediateTargetBytes;
+  const size_t floor   = s_.queue_sizing_auto ? minimum_depth : requested_depth;
+  const size_t ceiling = s_.queue_sizing_auto ? (target_bytes == kGpuInputTargetBytes    ? 64
+                                                 : target_bytes == kDisplayTargetBytes   ? 4
+                                                 : target_bytes == kCpuOutputTargetBytes ? 8
+                                                                                         : 8)
+                                              : requested_depth;
+  const size_t depth   = s_.queue_sizing_auto
+                             ? automatic_queue_depth(element_size, target_bytes, floor, ceiling)
+                             : requested_depth;
+  const size_t slots  = aligned_batch_slots(input_batch, static_cast<size_t>(output_stride), depth);
+  auto         queued = batched_queue(desc, {static_cast<int>(depth), output_size, output_stride});
+  const bool   device = desc.mem_loc == holoflow::core::MemLoc::Device;
+  queue_plan_.push_back({name, device, depth, slots, element_size, 0, slots * element_size, floor,
+                         ceiling, input_batch, static_cast<size_t>(output_stride), 0, false,
+                         s_.queue_sizing_auto, target_bytes, queued.producer->vertex});
+  return queued;
+}
+
+[[noreturn]] void GraphBuilder::Impl::throw_queue_plan_error(const std::string &reason) const {
+  std::ostringstream message;
+  message << reason << " (frame_bytes=" << frame_bytes_ << ")\n"
+          << "name | kind | slots | bytes/slot | extra scratch | total\n";
+  size_t vram = 0, ram = 0;
+  for (const auto &entry : queue_plan_) {
+    message << entry.name << " | " << (entry.device ? "device VRAM" : "pinned host") << " | "
+            << entry.slots << " | " << entry.bytes_per_slot << " | " << entry.extra_bytes << " | "
+            << entry.total_bytes << "\n";
+    (entry.device ? vram : ram) += entry.total_bytes;
+  }
+  message << "VRAM total=" << vram << " available=" << free_vram_ << " headroom=" << vram_headroom_
+          << "; host RAM total=" << ram << " available=" << free_ram_
+          << " headroom=" << ram_headroom_;
+  throw std::runtime_error(message.str());
+}
+
+void GraphBuilder::Impl::finish_queue_plan() {
+  // Fit the whole plan by shrinking the largest auto-sized queues first.
+  auto totals = [&]() {
+    std::pair<size_t, size_t> result{};
+    for (const auto &entry : queue_plan_)
+      (entry.device ? result.first : result.second) += entry.total_bytes;
+    return result;
+  };
+  const size_t vram_budget = free_vram_ > vram_headroom_ ? free_vram_ - vram_headroom_ : 0;
+  const size_t ram_budget  = free_ram_ > ram_headroom_ ? free_ram_ - ram_headroom_ : 0;
+  if (s_.queue_sizing_auto) {
+    auto used = totals();
+    while (used.first > vram_budget || used.second > ram_budget) {
+      auto largest = queue_plan_.end();
+      for (auto it = queue_plan_.begin(); it != queue_plan_.end(); ++it) {
+        const size_t budget   = it->device ? vram_budget : ram_budget;
+        const size_t occupied = it->device ? used.first : used.second;
+        if (it->depth > it->floor && occupied > budget &&
+            (largest == queue_plan_.end() || it->total_bytes > largest->total_bytes))
+          largest = it;
+      }
+      if (largest == queue_plan_.end())
+        break;
+      --largest->depth;
+      largest->slots =
+          largest->sliding_average
+              ? largest->depth + largest->extra_slots
+              : aligned_batch_slots(largest->input_batch, largest->stride, largest->depth);
+      largest->total_bytes = largest->slots * largest->bytes_per_slot +
+                             (largest->sliding_average ? largest->bytes_per_slot : 0);
+      used                 = totals();
+    }
+    for (auto &entry : queue_plan_) {
+      if (!entry.adjustable || entry.depth == 0)
+        continue;
+      if (entry.sliding_average) {
+        g_[entry.vertex].settings["target_capacity"] = entry.depth;
+      } else {
+        g_[entry.vertex].settings["target_capacity"] = entry.depth;
+      }
+    }
+  }
+  size_t             vram = 0, ram = 0;
+  std::ostringstream depths;
+  for (const auto &entry : queue_plan_) {
+    (entry.device ? vram : ram) += entry.total_bytes;
+    depths << entry.name << "=" << entry.depth << " (" << entry.slots << " slots, "
+           << entry.total_bytes << " bytes, "
+           << (entry.target_bytes ? "target=" + std::to_string(entry.target_bytes) + " bytes"
+                                  : "algorithm-determined")
+           << ", floor=" << entry.floor << ", ceiling=" << entry.ceiling << ") ";
+  }
+  if (vram > (free_vram_ > vram_headroom_ ? free_vram_ - vram_headroom_ : 0) ||
+      ram > (free_ram_ > ram_headroom_ ? free_ram_ - ram_headroom_ : 0)) {
+    throw_queue_plan_error("queue plan exceeds available memory");
+  }
+  logger()->info(
+      "[GraphBuilder] Queue plan frame_bytes={} depths=[{}] VRAM planned={} total={} free={} "
+      "headroom={} host planned={} total={} free={} headroom={}",
+      frame_bytes_, depths.str(), vram, total_vram_, free_vram_, vram_headroom_, ram, total_ram_,
+      free_ram_, ram_headroom_);
+}
+
 // -------------------------------------------------------------------------------------------------
 // Top-level pipeline
 // -------------------------------------------------------------------------------------------------
@@ -163,7 +398,9 @@ holoflow::core::GraphSpec GraphBuilder::Impl::build() {
     throw std::invalid_argument("derived signal plot sample time must be positive and finite");
   }
 
-  TDesc H = build_acquisition();
+  TDesc        H                  = build_acquisition();
+  const size_t source_frame_bytes = H.num_bytes() / std::max<size_t>(1, H.shape.at(0));
+  start_queue_plan(source_frame_bytes);
 
   if (s_.recording_method == RecordingMethod::RAW) {
     build_raw_record(H);
@@ -172,6 +409,7 @@ holoflow::core::GraphSpec GraphBuilder::Impl::build() {
   if (s_.raw_view || s_.view_type == ViewType::RAW) {
     bool should_exit = build_raw_view(H);
     if (should_exit) {
+      finish_queue_plan();
       return g_;
     }
   }
@@ -183,15 +421,14 @@ holoflow::core::GraphSpec GraphBuilder::Impl::build() {
       if (s_.import_source == ImportSource::HOLOFILE && s_.load_batch > 0 &&
           s_.load_end > s_.load_begin) {
         const int selected_frames = s_.load_end - s_.load_begin;
-        source_cycle_frames = static_cast<size_t>(
-            selected_frames / s_.load_batch * s_.load_batch);
+        source_cycle_frames = static_cast<size_t>(selected_frames / s_.load_batch * s_.load_batch);
       }
-      frames = temporal_window(frames,
-                               {.window_size = static_cast<size_t>(s_.time_window),
-                                .stride_size = static_cast<size_t>(s_.time_stride),
-                                .source_cycle_frames = source_cycle_frames});
+      frames = temporal_window(frames, {.window_size         = static_cast<size_t>(s_.time_window),
+                                        .stride_size         = static_cast<size_t>(s_.time_stride),
+                                        .source_cycle_frames = source_cycle_frames});
     }
     build_spatial_contrast_view(frames);
+    finish_queue_plan();
     return g_;
   }
 
@@ -210,11 +447,23 @@ holoflow::core::GraphSpec GraphBuilder::Impl::build() {
 
   // Batch queue with two readers. FH_delayed is used for Shack-Hartmann correction, FH_current is
   // used for propagation.
-  auto        target_capacity = std::max<size_t>(2, 2 * FH.shape.at(0));
-  auto        window_size     = static_cast<size_t>(s_.pp_accumulation);
-  const auto  timing_outputs  = dual_reader_batch_queue(FH, {target_capacity, window_size});
-  TDesc       FH_current      = timing_outputs.at(0);
-  const TDesc FH_delayed      = timing_outputs.at(1);
+  auto         target_capacity   = std::max<size_t>(2, 2 * FH.shape.at(0));
+  auto         window_size       = static_cast<size_t>(s_.pp_accumulation);
+  const size_t dual_input_batch  = static_cast<size_t>(FH.shape.at(0));
+  const size_t dual_element_size = FH.num_bytes() / dual_input_batch;
+  const size_t dual_delay        = (window_size - 1) / 2;
+  const size_t dual_minimum      = target_capacity + dual_input_batch + dual_delay + 1;
+  const size_t dual_slots =
+      ((dual_minimum + dual_input_batch - 1) / dual_input_batch) * dual_input_batch;
+  const bool   dual_device = FH.mem_loc == holoflow::core::MemLoc::Device;
+  const size_t dual_bytes  = dual_slots * dual_element_size + dual_element_size;
+  add_queue_plan(
+      "timing dual-reader", dual_device, dual_slots, dual_slots, dual_element_size,
+      [dual_bytes](size_t) { return dual_bytes; }, [dual_slots](size_t) { return dual_slots; },
+      dual_element_size);
+  const auto  timing_outputs = dual_reader_batch_queue(FH, {target_capacity, window_size});
+  TDesc       FH_current     = timing_outputs.at(0);
+  const TDesc FH_delayed     = timing_outputs.at(1);
 
   if (s_.autofocus_enabled) {
     FH_current = build_aberration_correction(FH_current, FH_delayed);
@@ -228,6 +477,7 @@ holoflow::core::GraphSpec GraphBuilder::Impl::build() {
     build_3d_cuts(FH_z);
   }
 
+  finish_queue_plan();
   return g_;
 }
 
@@ -284,7 +534,9 @@ bool GraphBuilder::Impl::build_raw_view(const TDesc &H) {
   auto Host = holotask::syncs::MemcpySettings::Target::Host;
 
   auto H_disp = memcpy(H, {Host});
-  auto H_view = batched_queue(H_disp, {s_.cpu_out_size, 1, 1});
+  auto H_view =
+      planned_batch_queue("raw display", H_disp, s_.queue_sizing_auto ? 8 : s_.cpu_out_size,
+                          s_.queue_sizing_auto ? 4 : 1, 1, 1);
 
   if (s_.raw_view) {
     xy_raw_display(H_view, {});
@@ -306,7 +558,8 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_preprocessing(TDesc H) {
 
   if (H.mem_loc != MemLoc::Device) {
     H = memcpy(H, {Device});
-    H = batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_stride});
+    H = planned_batch_queue("GPU input", H, s_.queue_sizing_auto ? 64 : s_.gpu_in_size,
+                            s_.queue_sizing_auto ? 16 : 1, s_.time_window, s_.time_stride);
   }
 
   return convert(H, {Target::F32, Strat::Real});
@@ -324,7 +577,8 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_time_frequency_analysis(TDes
   int64_t Hx    = static_cast<int64_t>(H.shape.at(2));
 
   H = reshape(H, {{1, T, Hy, Hx}, false});
-  H = batched_queue(H, {N_pre * 2, N_pre, N_pre}); // [N_pre, T, Hy, Hx]
+  H = planned_batch_queue("time-frequency input", H, N_pre * 2, N_pre * 2, N_pre,
+                          N_pre); // [N_pre, T, Hy, Hx]
 
   if (s_.time_method == TimeMethod::RFFT) {
     auto FH = rfft(H, {1}); // axis 1 = T dimension
@@ -396,7 +650,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_aberration_correction(const 
   }
 
   // Decouple the final propagation so it can overlap the next Shack-Hartmann iteration.
-  return batched_queue(corrected, {2, 1, 1});
+  return planned_batch_queue("aberration correction", corrected, 2, 2, 1, 1);
 }
 
 GraphBuilder::Impl::TDesc
@@ -529,7 +783,9 @@ void GraphBuilder::Impl::build_shack_hartmann_view(const TDesc                 &
   display      = transpose(display, {{0, 1, 3, 2, 4}});
   display      = reshape(display, {{1, height, width}});
   display      = convert(display, {Target::U8, Strat::Scaled});
-  display      = batched_queue(display, {s_.cpu_out_size, 1, 1});
+  display      = planned_batch_queue("Shack-Hartmann display", display,
+                                     s_.queue_sizing_auto ? 8 : s_.cpu_out_size,
+                                     s_.queue_sizing_auto ? 4 : 1, 1, 1);
   shack_hartmann_display(display, {});
 }
 
@@ -547,7 +803,9 @@ void GraphBuilder::Impl::build_shack_hartmann_xcorr_view(const TDesc            
   display = convert(display, {Target::U8, Strat::Scaled});
   display = transpose(display, {{0, 1, 3, 2, 4}});
   display = reshape(display, {{1, height, width}});
-  display = batched_queue(display, {s_.cpu_out_size, 1, 1});
+  display = planned_batch_queue("Shack-Hartmann xcorr display", display,
+                                s_.queue_sizing_auto ? 8 : s_.cpu_out_size,
+                                s_.queue_sizing_auto ? 4 : 1, 1, 1);
   shack_hartmann_xcorr_display(display, {});
 }
 
@@ -614,7 +872,9 @@ void GraphBuilder::Impl::build_zernike_outputs(const AberrationCorrectionState &
   const auto &phase  = *state.cumulative_phase_gpu;
 
   auto coeffs_reshaped = reshape(coeffs, {{1, static_cast<int64_t>(coeffs.shape.at(0))}});
-  auto queue           = batched_queue(coeffs_reshaped, {s_.cpu_out_size, 1, 1});
+  auto queue           = planned_batch_queue("Zernike coefficients display", coeffs_reshaped,
+                                             s_.queue_sizing_auto ? 8 : s_.cpu_out_size,
+                                             s_.queue_sizing_auto ? 4 : 1, 1, 1);
   coeffs_reshaped      = reshape(queue, {{static_cast<int64_t>(coeffs.shape.at(0))}});
   zernike_coefficients_display(coeffs_reshaped, {s_.autofocus_zernike_orders});
 
@@ -642,7 +902,9 @@ void GraphBuilder::Impl::build_zernike_outputs(const AberrationCorrectionState &
     auto display = copy(phase, {});
     display      = wrap2pi(display, {});
     display      = reshape(display, {{1, height, width}});
-    display      = batched_queue(display, {s_.cpu_out_size, 1, 1});
+    display      = planned_batch_queue("Zernike phase display", display,
+                                       s_.queue_sizing_auto ? 8 : s_.cpu_out_size,
+                                       s_.queue_sizing_auto ? 4 : 1, 1, 1);
     zernike_phase_display(display, {});
   }
 }
@@ -798,37 +1060,37 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_contrast_input(TDesc
   if (H.mem_loc != MemLoc::Device) {
     H = memcpy(H, {Device});
   }
-  H = batched_queue(H, {s_.gpu_in_size, 1, 1});
+  H = planned_batch_queue("spatial contrast GPU input", H,
+                          s_.queue_sizing_auto ? 64 : s_.gpu_in_size, s_.queue_sizing_auto ? 16 : 1,
+                          1, 1);
   return ascontiguousarray(H, {});
 }
 
 void GraphBuilder::Impl::build_spatial_contrast_view(const TDesc &frames) {
-  const size_t temporal_window_size = s_.pp_spatial_contrast_dimensions != 2
-                                          ? static_cast<size_t>(s_.time_window)
-                                          : size_t{1};
+  const size_t temporal_window_size =
+      s_.pp_spatial_contrast_dimensions != 2 ? static_cast<size_t>(s_.time_window) : size_t{1};
   if (frames.rank() != 3 || frames.shape.at(0) != temporal_window_size) {
     throw std::logic_error{"Spatial LSCI input has an unexpected temporal window shape"};
   }
 
-  auto result = spatial_contrast(frames,
-                                 {.window_size = s_.pp_spatial_contrast_dimensions == 1
-                                                     ? 1
-                                                     : s_.pp_spatial_contrast_window_size,
-                                  .temporal_window_size = static_cast<int>(temporal_window_size),
-                                  .method = s_.pp_spatial_contrast_method == 1
-                                                ? holotask::syncs::SpatialContrastMethod::FFT
-                                                : holotask::syncs::SpatialContrastMethod::Kernel});
+  auto result = spatial_contrast(
+      frames, {.window_size =
+                   s_.pp_spatial_contrast_dimensions == 1 ? 1 : s_.pp_spatial_contrast_window_size,
+               .temporal_window_size = static_cast<int>(temporal_window_size),
+               .method               = s_.pp_spatial_contrast_method == 1
+                                           ? holotask::syncs::SpatialContrastMethod::FFT
+                                           : holotask::syncs::SpatialContrastMethod::Kernel});
   if (s_.pp_flatfield) {
     // Spatial contrast uses the camera grid, so derive the filter from the source pixel pitch.
     const auto pitch = s_.spacial_pixel_size;
-    result = flatfield(result, flatfield_settings_from_cutoff_period(
-                                   s_.pp_flatfield_cutoff_period_m, pitch, pitch));
+    result           = flatfield(result, flatfield_settings_from_cutoff_period(
+                                             s_.pp_flatfield_cutoff_period_m, pitch, pitch));
   }
   build_xy_output(result, 0, true);
 }
 
 void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
-  TDesc result;
+  TDesc      result;
   const bool is_magnitude = FH_z.dtype == holoflow::core::DType::F32;
 
   if (s_.moment_type == MomentType::M0) {
@@ -870,8 +1132,8 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
   result = mean(result, {{0}, false}); // [1, H, W]
 
   if (s_.pp_registration) {
-    using Target = holotask::syncs::ConversionSettings::Target;
-    using Strat  = holotask::syncs::ConversionSettings::Strategy;
+    using Target        = holotask::syncs::ConversionSettings::Target;
+    using Strat         = holotask::syncs::ConversionSettings::Strategy;
     const auto outputs  = registration_outputs(result, {.radius = s_.pp_registration_radius});
     result              = outputs.at(0);
     auto output_display = fftshift(outputs.at(1), {{-2, -1}});
@@ -898,11 +1160,19 @@ void GraphBuilder::Impl::build_xy_output(TDesc result, size_t discard_first,
     throw std::invalid_argument{"pp_accumulation must be positive"};
   }
 
-  // auto target_capacity = static_cast<size_t>(std::max(1, s_.gpu_out_size));
-  auto target_capacity = 8ULL;
-  auto window_size     = static_cast<size_t>(s_.pp_accumulation);
-  auto slide_settings  = SlidingAverageSettings{target_capacity, window_size, discard_first};
-  result               = slide_avg(result, slide_settings);
+  auto         window_size   = static_cast<size_t>(s_.pp_accumulation);
+  const size_t result_bytes  = result.num_bytes() / static_cast<size_t>(result.shape.at(0));
+  const size_t sliding_floor = 8;
+  const size_t target_capacity =
+      s_.queue_sizing_auto
+          ? automatic_queue_depth(result_bytes, kSlidingTargetBytes, sliding_floor, 32)
+          : size_t{8};
+  auto slide_settings = SlidingAverageSettings{target_capacity, window_size, discard_first};
+  result              = slide_avg(result, slide_settings);
+  queue_plan_.push_back(
+      {"sliding average", true, target_capacity, target_capacity + window_size, result_bytes,
+       result_bytes, (target_capacity + window_size + 1) * result_bytes, sliding_floor, 32, 1, 1,
+       window_size, true, s_.queue_sizing_auto, kSlidingTargetBytes, result.producer->vertex});
 
   if (s_.pp_convolution) {
     throw std::logic_error{"Convolution is currently not supported"};
@@ -918,10 +1188,8 @@ void GraphBuilder::Impl::build_xy_output(TDesc result, size_t discard_first,
   // Display and recording use independent queues so neither consumer drains the other.
   auto convert_for_output = [&](const TDesc &input) {
     if (fixed_contrast_range) {
-      return convert(input,
-                     {Target::U8, Strat::FixedRange,
-                      s_.pp_spatial_contrast_display_max,
-                      s_.pp_spatial_contrast_invert_display});
+      return convert(input, {Target::U8, Strat::FixedRange, s_.pp_spatial_contrast_display_max,
+                             s_.pp_spatial_contrast_invert_display});
     }
     return convert(input, {Target::U8, Strat::Scaled});
   };
@@ -929,7 +1197,9 @@ void GraphBuilder::Impl::build_xy_output(TDesc result, size_t discard_first,
   if (s_.recording_method == RecordingMethod::PROCESSED) {
     auto result_rec = convert_for_output(result);
     result_rec      = memcpy(result_rec, {Host});
-    result_rec      = batched_queue(result_rec, {s_.cpu_out_size, 1, 1});
+    result_rec      = planned_batch_queue("processed recording", result_rec,
+                                          s_.queue_sizing_auto ? 8 : s_.cpu_out_size,
+                                          s_.queue_sizing_auto ? 4 : 1, 1, 1);
 
     auto path  = s_.recording_path.string();
     auto count = s_.recording_count;
@@ -946,7 +1216,9 @@ void GraphBuilder::Impl::build_xy_output(TDesc result, size_t discard_first,
   }
 
   auto display_result = convert_for_output(result);
-  display_result = batched_queue(display_result, {s_.gpu_out_size, 1, 1});
+  display_result      = planned_batch_queue("processed display", display_result,
+                                            s_.queue_sizing_auto ? 4 : s_.gpu_out_size,
+                                            s_.queue_sizing_auto ? 2 : 1, 1, 1);
   xy_processed_display(display_result, {});
 }
 
