@@ -94,6 +94,74 @@ constexpr int  kTopBarHeight             = 30;
 constexpr auto kDefaultSamplingFrequency = 37'000.0;
 constexpr auto kKeepCurrentConfigKey     = "preferences/always_keep_current_config";
 
+void save_graph_preferences(QSettings &settings,
+                            const holoflow::core::GraphSpecDumpPreferences &spec,
+                            const holoflow::runtime::GraphCompiledDumpPreferences &compiled) {
+  settings.beginGroup("preferences/graph_spec");
+  settings.setValue("rankdir", static_cast<int>(spec.rankdir));
+  settings.setValue("precision", spec.floating_point_precision);
+  settings.setValue("node_name", spec.dump_node_name);
+  settings.setValue("node_kind", spec.dump_node_kind);
+  settings.setValue("node_settings", spec.dump_node_settings);
+  settings.setValue("edge_indices", spec.dump_edge_indices);
+  settings.endGroup();
+
+  settings.beginGroup("preferences/graph_compiled");
+  settings.setValue("rankdir", static_cast<int>(compiled.rankdir));
+  settings.setValue("layout", static_cast<int>(compiled.layout));
+  settings.setValue("precision", compiled.floating_point_precision);
+  settings.setValue("node_name", compiled.dump_node_name);
+  settings.setValue("node_kind", compiled.dump_node_kind);
+  settings.setValue("node_settings", compiled.dump_node_settings);
+  settings.setValue("node_in_out_tids", compiled.dump_node_in_out_tids);
+  settings.setValue("edge_indices", compiled.dump_edge_indices);
+  settings.setValue("edge_descriptions", compiled.dump_edge_descriptions);
+  settings.setValue("section_info", compiled.dump_section_info);
+  settings.setValue("section_stream_addr", compiled.dump_section_stream_addr);
+  settings.setValue("resource_info", compiled.dump_resource_info);
+  settings.endGroup();
+}
+
+void restore_graph_preferences(QSettings &settings,
+                               holoflow::core::GraphSpecDumpPreferences &spec,
+                               holoflow::runtime::GraphCompiledDumpPreferences &compiled) {
+  settings.beginGroup("preferences/graph_spec");
+  const int spec_rankdir = settings.value("rankdir", static_cast<int>(spec.rankdir)).toInt();
+  if (spec_rankdir >= 0 && spec_rankdir <= 1)
+    spec.rankdir = static_cast<holoflow::core::GraphSpecDumpPreferences::Rankdir>(spec_rankdir);
+  spec.floating_point_precision =
+      std::clamp(settings.value("precision", spec.floating_point_precision).toInt(), 0, 17);
+  spec.dump_node_name = settings.value("node_name", spec.dump_node_name).toBool();
+  spec.dump_node_kind = settings.value("node_kind", spec.dump_node_kind).toBool();
+  spec.dump_node_settings = settings.value("node_settings", spec.dump_node_settings).toBool();
+  spec.dump_edge_indices = settings.value("edge_indices", spec.dump_edge_indices).toBool();
+  settings.endGroup();
+
+  settings.beginGroup("preferences/graph_compiled");
+  const int compiled_rankdir = settings.value("rankdir", static_cast<int>(compiled.rankdir)).toInt();
+  if (compiled_rankdir >= 0 && compiled_rankdir <= 1)
+    compiled.rankdir =
+        static_cast<holoflow::runtime::GraphCompiledDumpPreferences::Rankdir>(compiled_rankdir);
+  const int layout = settings.value("layout", static_cast<int>(compiled.layout)).toInt();
+  if (layout >= 0 && layout <= 3)
+    compiled.layout = static_cast<holoflow::runtime::GraphCompiledDumpPreferences::Layout>(layout);
+  compiled.floating_point_precision =
+      std::clamp(settings.value("precision", compiled.floating_point_precision).toInt(), 0, 17);
+  compiled.dump_node_name = settings.value("node_name", compiled.dump_node_name).toBool();
+  compiled.dump_node_kind = settings.value("node_kind", compiled.dump_node_kind).toBool();
+  compiled.dump_node_settings = settings.value("node_settings", compiled.dump_node_settings).toBool();
+  compiled.dump_node_in_out_tids =
+      settings.value("node_in_out_tids", compiled.dump_node_in_out_tids).toBool();
+  compiled.dump_edge_indices = settings.value("edge_indices", compiled.dump_edge_indices).toBool();
+  compiled.dump_edge_descriptions =
+      settings.value("edge_descriptions", compiled.dump_edge_descriptions).toBool();
+  compiled.dump_section_info = settings.value("section_info", compiled.dump_section_info).toBool();
+  compiled.dump_section_stream_addr =
+      settings.value("section_stream_addr", compiled.dump_section_stream_addr).toBool();
+  compiled.dump_resource_info = settings.value("resource_info", compiled.dump_resource_info).toBool();
+  settings.endGroup();
+}
+
 QSpinBox *create_spin_box(QWidget *parent, int minimum, int maximum, int value) {
   auto *spin_box = new QSpinBox(parent);
   spin_box->setRange(minimum, maximum);
@@ -688,6 +756,8 @@ private:
     manager_.set_dump_runtime_failure_graphs(runtime_failure_graph_checkbox_->isChecked());
     QSettings settings;
     settings.setValue(kKeepCurrentConfigKey, keep_current_config_checkbox_->isChecked());
+    save_graph_preferences(settings, graph_spec_dump_preferences,
+                           graph_compiled_dump_preferences);
     settings.sync();
   }
 
@@ -1712,6 +1782,12 @@ void MainWindow::initialize_pipeline_manager() {
       shack_hartmann_widget_, shack_hartmann_xcorr_widget_, registration_xcorr_widget_,
       zernike_phase_widget_, zernike_history_widget_);
   pipeline_manager_->set_dump_runtime_failure_graphs(dump_runtime_failure_graphs_);
+  QSettings settings;
+  auto spec_preferences = pipeline_manager_->get_graph_spec_dump_preferences();
+  auto compiled_preferences = pipeline_manager_->get_graph_compiled_dump_preferences();
+  restore_graph_preferences(settings, spec_preferences, compiled_preferences);
+  pipeline_manager_->update_graph_spec_dump_preferences(spec_preferences);
+  pipeline_manager_->update_graph_compiled_dump_preferences(compiled_preferences);
   pipeline_manager_thread_ = new QThread(this);
   pipeline_manager_->moveToThread(pipeline_manager_thread_);
   pipeline_manager_thread_->start();
