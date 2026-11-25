@@ -38,6 +38,7 @@
 #include <QLineEdit>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -49,7 +50,6 @@
 #include <QSizePolicy>
 #include <QSlider>
 #include <QSpinBox>
-#include <QSplitter>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QStyle>
@@ -475,6 +475,39 @@ private:
   bool            result_valid_       = false;
 };
 
+class CollapsiblePreferencesGroup : public QGroupBox {
+public:
+  CollapsiblePreferencesGroup(const QString &title, QWidget *parent)
+      : QGroupBox(parent), title_(title) {
+    update_title();
+  }
+
+  void set_content(QWidget *content) {
+    content_ = content;
+    content_->hide();
+  }
+
+protected:
+  void mousePressEvent(QMouseEvent *event) override {
+    if (event->position().y() <= 30) {
+      expanded_ = !expanded_;
+      content_->setVisible(expanded_);
+      update_title();
+      return;
+    }
+    QGroupBox::mousePressEvent(event);
+  }
+
+private:
+  void update_title() {
+    setTitle((expanded_ ? QStringLiteral("▴ ") : QStringLiteral("▾ ")) + title_);
+  }
+
+  QString  title_;
+  QWidget *content_  = nullptr;
+  bool     expanded_ = false;
+};
+
 class PreferencesDialog : public QDialog {
 public:
   using GraphSpecDumpPreferences     = holoflow::core::GraphSpecDumpPreferences;
@@ -484,8 +517,17 @@ public:
       : QDialog(parent), manager_(manager) {
     setWindowTitle(tr("Preferences"));
     setMinimumWidth(400);
+    resize(600, 500);
 
     auto *dialog_layout = new QVBoxLayout(this);
+    auto *scroll_area   = new QScrollArea(this);
+    scroll_area->setObjectName("preferencesScrollArea");
+    scroll_area->setWidgetResizable(true);
+    scroll_area->setFrameShape(QFrame::NoFrame);
+    scroll_area->viewport()->setObjectName("preferencesScrollViewport");
+    auto *sections        = new QWidget(scroll_area);
+    sections->setObjectName("preferencesSections");
+    auto *sections_layout = new QVBoxLayout(sections);
 
     auto *import_group_box        = new QGroupBox(tr("Import"), this);
     auto *import_form             = new QFormLayout();
@@ -497,18 +539,16 @@ public:
            "opening a new .holo file. When off, load settings saved in the file if available."));
     import_form->addRow(keep_current_config_checkbox_);
     import_group_box->setLayout(import_form);
-    dialog_layout->addWidget(import_group_box);
-
-    auto *splitter = new QSplitter(Qt::Horizontal, this);
+    sections_layout->addWidget(import_group_box);
 
     // Dump preferences
     auto *graph_spec_dump_group_box =
         setup_graph_spec_dump_preferences(manager_.get_graph_spec_dump_preferences());
-    splitter->addWidget(graph_spec_dump_group_box);
+    sections_layout->addWidget(graph_spec_dump_group_box);
 
     auto *graph_compiled_dump_group_box =
         setup_graph_compiled_dump_preferences(manager_.get_graph_compiled_dump_preferences());
-    splitter->addWidget(graph_compiled_dump_group_box);
+    sections_layout->addWidget(graph_compiled_dump_group_box);
 
     auto *runtime_failure_group_box = new QGroupBox(tr("Failure Diagnostics"), this);
     auto *runtime_failure_form      = new QFormLayout();
@@ -520,9 +560,10 @@ public:
            "runtime errors and Windows exceptions."));
     runtime_failure_form->addRow(tr("Dump graph on failure"), runtime_failure_graph_checkbox_);
     runtime_failure_group_box->setLayout(runtime_failure_form);
-    splitter->addWidget(runtime_failure_group_box);
-
-    dialog_layout->addWidget(splitter);
+    sections_layout->addWidget(runtime_failure_group_box);
+    sections_layout->addStretch();
+    scroll_area->setWidget(sections);
+    dialog_layout->addWidget(scroll_area);
 
     // Apply / Close
     auto *button_box = new QDialogButtonBox(QDialogButtonBox::Close, this);
@@ -536,9 +577,17 @@ public:
   }
 
 private:
+  void make_collapsible(CollapsiblePreferencesGroup *group_box, QFormLayout *form) {
+    auto *content = new QWidget(group_box);
+    content->setLayout(form);
+    auto *layout = new QVBoxLayout(group_box);
+    layout->addWidget(content);
+    group_box->set_content(content);
+  }
+
   QGroupBox *
   setup_graph_spec_dump_preferences(const GraphSpecDumpPreferences &graph_spec_dump_preferences) {
-    auto *group_box  = new QGroupBox(tr("Graph Dump Spec"), this);
+    auto *group_box  = new CollapsiblePreferencesGroup(tr("Graph Dump Spec"), this);
     auto *input_form = new QFormLayout();
     input_form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
 
@@ -587,14 +636,14 @@ private:
     input_form->addRow(tr("Edge indices"),
                        graph_spec_dump_preferences_widgets_.edge_indices_checkbox_);
 
-    group_box->setLayout(input_form);
+    make_collapsible(group_box, input_form);
     return group_box;
   }
 
   // TODO add compiled graph preferences args
   QGroupBox *setup_graph_compiled_dump_preferences(
       const GraphCompiledDumpPreferences &graph_compiled_dump_preferences) {
-    auto *group_box  = new QGroupBox(tr("Graph Compiled Spec"), this);
+    auto *group_box  = new CollapsiblePreferencesGroup(tr("Graph Compiled Spec"), this);
     auto *input_form = new QFormLayout();
     input_form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
 
@@ -701,7 +750,7 @@ private:
     input_form->addRow(tr("Resource info"),
                        graph_compiled_dump_preferences_widgets_.resources_toggle_checkbox_);
 
-    group_box->setLayout(input_form);
+    make_collapsible(group_box, input_form);
     return group_box;
   }
 
