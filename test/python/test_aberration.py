@@ -491,6 +491,40 @@ class HolographyDemoTest(unittest.TestCase):
                 self.assertIn(f"\\n({kind})\\n", label)
                 self.assertEqual(marker in label, kind in {"Arange", "Meshgrid", "Exp"}, name)
 
+    def test_fp16_demo_traces_native_pipeline(self):
+        from holography_demo.pipeline import pipeline
+
+        import struct
+
+        frames, width, height = 128, 512, 320
+        size = frames * width * height
+        header = struct.pack("<IHHIIIQB35s", 0x4F4C4F48, 66, 8, width, height, frames,
+                             size, 0, bytes(35))
+        with (self.root / "fp16.holo").open("wb") as fixture:
+            fixture.write(header)
+            fixture.truncate(len(header) + size)
+        config = self.config(
+            input={"path": "fp16.holo", "mode": "looping", "load_kind": "cpu_cached",
+                   "batch_size": 32},
+            time={"precision": "fp16", "window_frames": 32, "component_end": 16},
+            postprocessing={"average_window": 64},
+        )
+        nodes = hf.trace(pipeline, config).to_json()["nodes"].values()
+        by_type = {node["type"]: node["params"] for node in nodes}
+        self.assertNotIn("Pca", by_type)
+        queue = by_type["PcaDecompositionQueue"]
+        self.assertEqual((queue["batch_size"], queue["slot_count"]), (4, 3))
+        self.assertTrue(queue["use_fused_f16"])
+        self.assertEqual(by_type["PcaProjection"]["output_dtype"], "F16")
+        self.assertTrue(by_type["FresnelDiffraction"]["use_fused_f16"])
+        self.assertTrue(by_type["FresnelDiffraction"]["reduce_magnitude"])
+        self.assertEqual(by_type["DualReaderBatchQueue"]["window_size"], 64)
+        self.assertEqual(by_type["Memcpy"]["target"], "Device")
+
+    def test_fp16_demo_rejects_finite_input(self):
+        with self.assertRaisesRegex(ValueError, "requires looping CPU-cached input"):
+            self.config(time={"precision": "fp16"})
+
     def test_looping_cli_reports_summary(self):
         from holography_demo.cli import run_demo
 

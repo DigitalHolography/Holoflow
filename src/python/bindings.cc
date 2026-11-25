@@ -25,22 +25,24 @@
 #include "holonp/arange.hh"
 #include "holonp/asarray.hh"
 #include "holonp/copy.hh"
+#include "holonp/divide.hh"
 #include "holonp/exp.hh"
 #include "holonp/fft2.hh"
 #include "holonp/fftshift.hh"
-#include "holonp/divide.hh"
 #include "holonp/max.hh"
 #include "holonp/mean.hh"
-#include "holonp/min.hh"
-#include "holonp/subtract.hh"
 #include "holonp/meshgrid.hh"
+#include "holonp/min.hh"
 #include "holonp/multiply.hh"
+#include "holonp/remainder.hh"
 #include "holonp/reshape.hh"
 #include "holonp/slice.hh"
 #include "holonp/square.hh"
+#include "holonp/subtract.hh"
 #include "holonp/transpose.hh"
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
+#include "holotask/asyncs/pca_decomposition_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
 #include "holotask/sinks/holofile.hh"
 #include "holotask/sources/holofile.hh"
@@ -57,7 +59,6 @@
 #include "holotask/syncs/shack_hartmann_slopes.hh"
 #include "holotask/syncs/short_time_fresnel_diffraction.hh"
 #include "holotask/syncs/wrap2pi.hh"
-#include "holonp/remainder.hh"
 #include "holotask/syncs/zernike_from_slopes.hh"
 #include "holotask/syncs/zernike_phase.hh"
 
@@ -108,6 +109,9 @@ std::unique_ptr<hc::Registry> make_registry() {
   r->register_sync("Filter2D", std::make_unique<holotask::syncs::Filter2DFactory>());
   r->register_sync("Flatfield", std::make_unique<holotask::syncs::FlatfieldFactory>());
   r->register_sync("Pca", std::make_unique<holotask::syncs::PcaFactory>());
+  r->register_sync("PcaProjection", std::make_unique<holotask::syncs::PcaProjectionFactory>());
+  r->register_async("PcaDecompositionQueue",
+                    std::make_unique<holotask::asyncs::PcaDecompositionQueueFactory>());
   r->register_sync("PctClip", std::make_unique<holotask::syncs::PctClipFactory>());
   r->register_sync("FresnelDiffraction",
                    std::make_unique<holotask::syncs::FresnelDiffractionFactory>());
@@ -593,6 +597,7 @@ PYBIND11_MODULE(_native, m) {
   py::enum_<holoflow::core::DType>(m, "DType")
       .value("uint8", holoflow::core::DType::U8)
       .value("uint16", holoflow::core::DType::U16)
+      .value("float16", holoflow::core::DType::F16)
       .value("float32", holoflow::core::DType::F32)
       .value("complex64", holoflow::core::DType::CF32);
   py::class_<hc::TDesc>(m, "Descriptor")

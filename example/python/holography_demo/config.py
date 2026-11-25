@@ -49,7 +49,8 @@ def load_config(filename):
     defaults = {
         "input": dict(path=None, mode="finite", start_frame=0, end_frame=None, batch_size=32,
                       load_kind="live", tail="drop", max_fps=None, duration_seconds=None),
-        "time": dict(method="pca", window_frames=32, component_begin=0, component_end=16),
+        "time": dict(method="pca", precision="fp32", window_frames=32,
+                     component_begin=0, component_end=16),
         "space": dict(method="fresnel", wavelength_m=8.51e-7, pixel_pitch_m=2.0e-5,
                       distance_m=0.49),
         "spatial_filter": dict(enabled=False, r_inner=3, r_outer=1024, s_inner=0, s_outer=1),
@@ -100,6 +101,7 @@ def load_config(filename):
         begin, end = time["component_begin"], time["component_end"]
         _check(_integer(begin, 0) and _integer(end) and begin < end <= temporal_frames,
                "time.component_begin and time.component_end must bound a nonempty range within time.window_frames")
+    _check(time["precision"] in ("fp32", "fp16"), "time.precision must be fp32 or fp16")
     space = defaults["space"]
     _check(space["method"] in ("none", "fresnel"), "space.method must be none or fresnel")
     spatial_filter = defaults["spatial_filter"]
@@ -115,6 +117,15 @@ def load_config(filename):
            "viewer.cao_compare_modes requires viewer.cao_coefficients_only")
     _check(aberration["slope_mode"] in ("single_reference", "full_pairwise"),
            "aberration.slope_mode must be single_reference or full_pairwise")
+    if time["precision"] == "fp16":
+        _check(source["mode"] == "looping" and source["load_kind"] == "cpu_cached",
+               "time.precision: fp16 requires looping CPU-cached input")
+        _check(source["batch_size"] == 32 and time["method"] == "pca"
+               and temporal_frames == 32 and end - begin <= 16,
+               "time.precision: fp16 requires 32-frame input and PCA windows with at most 16 components")
+        _check(space["method"] == "fresnel" and not aberration["enabled"]
+               and not spatial_filter["enabled"],
+               "time.precision: fp16 requires Fresnel with aberration correction and spatial filtering disabled")
     graph = defaults["graph"]
     post = defaults["postprocessing"]
     average_window = post["average_window"]

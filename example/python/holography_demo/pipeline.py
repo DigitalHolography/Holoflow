@@ -12,6 +12,28 @@ from .queues import host_queue
 from .temporal import process_temporal_windows
 
 
+def _fp16_image(frames, config):
+    if frames.dtype != hf.uint8 or frames.shape != (32, 320, 512):
+        raise ValueError("time.precision: fp16 requires U8 input with shape [32, 320, 512]")
+    # Both queues own their storage. Separate them with the native device copy.
+    windows = frames.to("device").reshape((1, 32, 320, 512), copy=False)
+    grouped, eigenvectors = hf.pca_decomposition_queue(windows, 4, 3, use_fused_f16=True)
+    projected = hf.pca_projection(
+        grouped, eigenvectors, config.time["component_begin"], config.time["component_end"],
+        use_fused_f16=True,
+    )
+    current, _, _ = hf.dual_reader_batch_queue(
+        projected, config.queues["propagation_windows"], config.postprocessing["average_window"]
+    )
+    space = config.space
+    pitch = space["pixel_pitch_m"]
+    image = hf.fresnel_diffraction(
+        current, space["wavelength_m"], pitch, pitch, space["distance_m"],
+        output_magnitude=True, use_fused_f16=True, reduce_magnitude=True,
+    )
+    return hf.mean(hf.fft.fftshift(image, axes=(-2, -1)), axis=0)
+
+
 def pipeline(config):
     # ---- Frame input and GPU upload --------------------------------------------------------------
     source = config.input
@@ -40,6 +62,11 @@ def pipeline(config):
         temporal_frames,
         node_id="uploaded_frames",
     )
+
+    if config.time.get("precision") == "fp16":
+        image, average_window = postprocess_image(_fp16_image(frames, config), config, True)
+        image = hf.batch_queue(image, config.queues["output_images"], 1, 1, node_id="device_output")
+        return _output(image, config, interval_ms, average_window)
 
     # ---- Temporal and spatial preprocessing ------------------------------------------------------
     field = process_temporal_windows(frames, temporal_frames, config.time)
@@ -91,14 +118,18 @@ def pipeline(config):
 
     # ---- Output and metrics ----------------------------------------------------------------------
     image = host_queue(image, config, "host_output")
+    return _output(image, config, interval_ms, average_window, diagnostics)
+
+
+def _output(image, config, interval_ms, average_window, diagnostics=None):
     image = hf.throughput(image, interval_ms=interval_ms, node_id="output_fps")
     measured = hf.latency_end(
         image,
         source_node_id="ingress",
         node_id="latency",
         interval_ms=interval_ms,
-        window_frames=(config.correction_window + average_window - 1) * temporal_frames,
-        stride_frames=temporal_frames,
+        window_frames=(config.correction_window + average_window - 1) * config.temporal_frames,
+        stride_frames=config.temporal_frames,
     )
     if config.viewer["enabled"] and not config.viewer["cao_coefficients_only"]:
         xy = hf.sinks.numpy(measured, length=config.output_count, node_id="xy_output")

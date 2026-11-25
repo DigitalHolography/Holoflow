@@ -31,13 +31,33 @@ def pca(x: Tensor, begin: int, end: int, *, node_id: str | None = None) -> Tenso
     return operation("Pca", (x,), {"begin": begin, "end": end}, node_id)
 
 
+def pca_decomposition_queue(x: Tensor, batch_size: int, slot_count: int, *,
+                            use_fused_f16: bool = False, node_id: str | None = None):
+    """Queue PCA windows and return the grouped input and eigenvectors."""
+    return operation("PcaDecompositionQueue", (x,), {
+        "batch_size": batch_size, "slot_count": slot_count, "use_fused_f16": use_fused_f16,
+    }, node_id)
+
+
+def pca_projection(x: Tensor, eigenvectors: Tensor, begin: int, end: int, *,
+                   use_fused_f16: bool = False, node_id: str | None = None) -> Tensor:
+    """Project grouped windows using eigenvectors from the decomposition queue."""
+    return operation("PcaProjection", (x, eigenvectors), {
+        "begin": begin, "end": end, "use_fused_f16": use_fused_f16,
+        "output_dtype": "F16" if use_fused_f16 else "F32",
+    }, node_id)
+
+
 def fresnel_diffraction(x: Tensor, wavelength: float, dx: float, dy: float,
                         z: float, axes=(-2, -1), output_magnitude: bool = False,
                         skip_phase_shift: bool = True,
-                        *, node_id: str | None = None) -> Tensor:
+                        *, use_fused_f16: bool = False, reduce_magnitude: bool = False,
+                        node_id: str | None = None) -> Tensor:
     return operation("FresnelDiffraction", (x,), {
         "lambda": wavelength, "dx": dx, "dy": dy, "z": z, "axes": list(axes),
         "output_magnitude": output_magnitude, "skip_phase_shift": skip_phase_shift,
+        **({"use_fused_f16": True} if use_fused_f16 else {}),
+        **({"reduce_magnitude": True} if reduce_magnitude else {}),
     }, node_id)
 
 

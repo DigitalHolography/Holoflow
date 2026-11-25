@@ -48,8 +48,11 @@ from ._latency import latency_end, latency_start
 from ._ops import batch_queue, fresnel_diffraction, mean, pca, sliding_average
 from . import fft, sources, sinks
 
+from ._ops import pca_decomposition_queue, pca_projection
+
 uint8 = DType.uint8
 uint16 = DType.uint16
+float16 = DType.float16
 float32 = DType.float32
 complex64 = DType.complex64
 
