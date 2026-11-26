@@ -243,6 +243,12 @@ QGroupBox::title {
   font-weight: 700;
 }
 
+QScrollArea#preferencesScrollArea,
+QWidget#preferencesScrollViewport,
+QWidget#preferencesSections {
+  background-color: @WINDOW@;
+}
+
 QGroupBox:disabled,
 QGroupBox:disabled::title {
   color: @DISABLED@;
