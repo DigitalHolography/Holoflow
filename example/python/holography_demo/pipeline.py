@@ -7,31 +7,9 @@ import holoflow as hf
 
 from .aberration import correct_aberration
 from .postprocessing import postprocess_image
-from .propagation import fresnel_diffraction, quadratic_lens
-from .queues import host_queue
+from .propagation import fresnel_diffraction, reconstruct_image, spatial_filter
+from .queues import output_queue, propagation_queue
 from .temporal import process_temporal_windows
-
-
-def _fp16_image(frames, config):
-    if frames.dtype != hf.uint8 or frames.shape != (32, 320, 512):
-        raise ValueError("time.precision: fp16 requires U8 input with shape [32, 320, 512]")
-    # Both queues own their storage. Separate them with the native device copy.
-    windows = frames.to("device").reshape((1, 32, 320, 512), copy=False)
-    grouped, eigenvectors = hf.pca_decomposition_queue(windows, 4, 3, use_fused_f16=True)
-    projected = hf.pca_projection(
-        grouped, eigenvectors, config.time["component_begin"], config.time["component_end"],
-        use_fused_f16=True,
-    )
-    current, _, _ = hf.dual_reader_batch_queue(
-        projected, config.queues["propagation_windows"], config.postprocessing["average_window"]
-    )
-    space = config.space
-    pitch = space["pixel_pitch_m"]
-    lens = quadratic_lens(*current.shape[-2:], space["wavelength_m"], pitch, pitch,
-                          space["distance_m"])
-    spectrum = hf.fft.fft2(current.astype(hf.float32) * lens, prefer_fp16=True)
-    image = hf.mean(hf.abs(spectrum), axis=-3, keepdims=True)
-    return hf.mean(hf.fft.fftshift(image, axes=(-2, -1)), axis=0)
 
 
 def pipeline(config):
@@ -63,64 +41,25 @@ def pipeline(config):
         node_id="uploaded_frames",
     )
 
-    if config.time.get("precision") == "fp16":
-        image, average_window = postprocess_image(_fp16_image(frames, config), config, True)
-        if config.viewer["enabled"] and not config.viewer["cao_coefficients_only"]:
-            image = host_queue(image, config, "host_output")
-        else:
-            image = hf.batch_queue(image, config.queues["output_images"], 1, 1, node_id="device_output")
-        return _output(image, config, interval_ms, average_window)
+    precision = config.time.get("precision", "fp32")
+    field = process_temporal_windows(frames, temporal_frames, config.time, precision=precision)
+    if config.spatial_filter["enabled"]:
+        field = spatial_filter(field, config.spatial_filter, precision=precision)
 
-    # ---- Temporal and spatial preprocessing ------------------------------------------------------
-    field = process_temporal_windows(frames, temporal_frames, config.time)
-    space = config.space
-    spatial_filter = config.spatial_filter
-    if spatial_filter["enabled"]:
-        field = hf.filter2d(
-            field,
-            spatial_filter["r_inner"],
-            spatial_filter["r_outer"],
-            spatial_filter["s_inner"],
-            spatial_filter["s_outer"],
-            node_id="spatial_filter",
-        )
-    if config.time["method"] == "pca" and not config.aberration["enabled"]:
-        field = hf.batch_queue(
-            field,
-            config.queues["propagation_windows"],
-            1,
-            1,
-            node_id="propagation_windows",
-        )
-
-    # ---- Aberration correction -------------------------------------------------------------------
     diagnostics = {}
     if config.aberration["enabled"]:
-        field, diagnostics = correct_aberration(field, config)
+        field, diagnostics = correct_aberration(field, config, precision=precision)
+    elif config.time["method"] == "pca":
+        field = propagation_queue(field, config, precision=precision)
 
-    # ---- Image reconstruction --------------------------------------------------------------------
-    propagated = space["method"] == "fresnel"
-    if propagated:
-        pixel_pitch_m = space["pixel_pitch_m"]
-        field = fresnel_diffraction(
-            field,
-            space["wavelength_m"],
-            pixel_pitch_m,
-            pixel_pitch_m,
-            space["distance_m"],
-            output_magnitude=True,
-        )
-    elif config.aberration["enabled"] or config.time["method"] == "pca":
-        field = hf.abs(field)
-    image = hf.mean(field, axis=1)
-    if propagated:
-        image = hf.fft.fftshift(image, axes=(-2, -1))
+    image = reconstruct_image(field, config, precision=precision, fresnel=fresnel_diffraction)
+    propagated = config.space["method"] == "fresnel"
 
     # ---- Image postprocessing --------------------------------------------------------------------
     image, average_window = postprocess_image(image, config, propagated)
 
     # ---- Output and metrics ----------------------------------------------------------------------
-    image = host_queue(image, config, "host_output")
+    image = output_queue(image, config, precision=precision)
     return _output(image, config, interval_ms, average_window, diagnostics)
 
 

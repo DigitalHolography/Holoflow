@@ -373,7 +373,8 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
     if (prefs.dump_node_kind) {
       const bool is_failure_node = !failure_node.empty() && np.spec.name == failure_node;
       if (np.infer.kind == core::TaskKind::Async) {
-        const std::string label_in = label_base.str() + "\n(Producer/Write)" + ids_line + "\n";
+        const std::string label_in =
+            label_base.str() + "\n(" + np.spec.kind + "/Write)" + ids_line + "\n";
         ss << std::format("  v{}_in [label=\"{}\", shape=invhouse, fillcolor=\"{}\", color=\"{}\", "
                           "penwidth={}, style=\"filled,dashed\"];\n",
                           v, escape_for_label(label_in),
@@ -381,7 +382,8 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
                           is_failure_node ? kFailureBorderColor : kAsyncProducerBorderColor,
                           is_failure_node ? 3 : 1);
 
-        const std::string label_out = label_base.str() + "\n(Consumer/Read)" + ids_line + "\n";
+        const std::string label_out =
+            label_base.str() + "\n(" + np.spec.kind + "/Read)" + ids_line + "\n";
         ss << std::format("  v{}_out [label=\"{}\", shape=house, fillcolor=\"{}\", color=\"{}\", "
                           "penwidth={}, style=\"filled,dashed\"];\n",
                           v, escape_for_label(label_out),

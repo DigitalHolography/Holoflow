@@ -53,6 +53,8 @@ TEST(CompiledGraphDisplayTest, RendersSyncAsyncEdgesSectionsAndResources) {
   const auto dot = holoflow::runtime::to_dot(output, {}, "holoflow_compiled");
   EXPECT_NE(dot.find("digraph holoflow_compiled"), std::string::npos);
   EXPECT_NE(dot.find("shape=invhouse"), std::string::npos);
+  EXPECT_NE(dot.find("(bridge/Write)"), std::string::npos);
+  EXPECT_NE(dot.find("(bridge/Read)"), std::string::npos);
   EXPECT_NE(dot.find("color=\"#0066cc\""), std::string::npos);
   EXPECT_NE(dot.find("tid:0"), std::string::npos);
   EXPECT_NE(dot.find("Section 3: producer"), std::string::npos);

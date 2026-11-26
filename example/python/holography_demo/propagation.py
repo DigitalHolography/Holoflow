@@ -6,6 +6,35 @@
 from math import isfinite, pi
 
 import holoflow as hf
+from holoflow import _native
+
+
+def spatial_filter(field, settings, *, precision):
+    half = precision == "fp16" and field.dtype == hf.float16
+    return hf.filter2d(
+        field, settings["r_inner"], settings["r_outer"], settings["s_inner"], settings["s_outer"],
+        use_fused_f16=half and _native.supports_sm120(), normalize=half, node_id="spatial_filter",
+    )
+
+
+def reconstruct_image(field, config, *, precision, fresnel):
+    space = config.space
+    propagated = space["method"] == "fresnel"
+    if propagated:
+        pitch = space["pixel_pitch_m"]
+        args = (field, space["wavelength_m"], pitch, pitch, space["distance_m"])
+        if precision == "fp16" and field.dtype in (hf.float16, hf.DType.complex32):
+            widened = field.astype(hf.float32 if field.dtype == hf.float16 else hf.complex64)
+            lens = quadratic_lens(*field.shape[-2:], *args[1:])
+            magnitude = hf.abs(hf.fft.fft2(widened * lens, prefer_fp16=True))
+            reduced = hf.mean(magnitude, axis=-3, keepdims=True)
+            return hf.mean(hf.fft.fftshift(reduced, axes=(-2, -1)), axis=0)
+        else:
+            field = fresnel(*args, output_magnitude=True)
+    elif config.aberration["enabled"] or config.time["method"] == "pca":
+        field = hf.abs(field)
+    image = hf.mean(field, axis=1)
+    return hf.fft.fftshift(image, axes=(-2, -1)) if propagated else image
 
 
 def fresnel_diffraction_decomposed(field, wavelength, dx, dy, z, *, output_magnitude):

@@ -1,7 +1,7 @@
 input:
-  # path: D:\\260312_GUJ_1.holo
-  path: C:\\Users\\guill\\Documents\\holofiles_data\\GUJ_20260424_224317_AQ001.holo
-  mode: finite
+  path: D:\\260312_GUJ_1.holo
+  # path: C:\\Users\\guill\\Documents\\holofiles_data\\GUJ_20260424_224317_AQ001.holo
+  mode: looping
   start_frame: 0
   end_frame: null
   batch_size: 32
@@ -14,6 +14,7 @@ time:
   window_frames: 32
   component_begin: 0
   component_end: 16
+  precision: fp16
 space:
   method: fresnel
   wavelength_m: 8.51e-7
@@ -26,7 +27,7 @@ spatial_filter:
   s_inner: 0
   s_outer: 1
 aberration:
-  enabled: true
+  enabled: false
   slope_mode: full_pairwise
   subapertures: 5
   zernike_modes: [4, 5, 6]
@@ -36,16 +37,18 @@ metrics:
   history_batches: 8192
 postprocessing:
   average_window: 64
-  flatfield_cutoff_m: 0.01
+  # flatfield_cutoff_m: 0.01
+  flatfield_cutoff_m: null
   percentile_clip: null # Or {min_pct: 0.02, max_pct: 99.98, roi_radius: 0.9}.
 viewer:
-  enabled: true
+  enabled: false
   max_frames: 8192
   cao_diagnostics: false
   cao_coefficients_only: false
   cao_compare_modes: false
 graph:
   enabled: true
+  perfetto: true
   log_dir: logs/python
   open_browser: true
 queues:

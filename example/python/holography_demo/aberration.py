@@ -3,9 +3,11 @@
 
 """Estimate and correct aberrations and collect CAO diagnostics."""
 
+from functools import partial
 from math import pi
 
 import holoflow as hf
+from holoflow import _native
 
 from . import aberration_ops
 from .postprocessing import flatfield
@@ -123,13 +125,14 @@ def _correct_aberration(field, config, *, subaperture_fresnel, zernike_phase, ap
     return corrected, diagnostics
 
 
-def correct_aberration_native(field, config):
+def correct_aberration_native(field, config, *, precision="fp32"):
+    output_cf16 = precision == "fp16" and field.dtype == hf.float16 and _native.supports_sm120()
     return _correct_aberration(
         field,
         config,
         subaperture_fresnel=hf.short_time_fresnel_diffraction,
         zernike_phase=hf.zernike_phase,
-        apply_phase=hf.correct_phase,
+        apply_phase=partial(hf.correct_phase, output_cf16=output_cf16),
         normalize=hf.normalize,
     )
 
@@ -145,5 +148,7 @@ def correct_aberration_decomposed(field, config):
     )
 
 
-# Select correct_aberration_native to use the fused reference stages.
-correct_aberration = correct_aberration_decomposed
+def correct_aberration(field, config, *, precision="fp32"):
+    if precision == "fp16":
+        return correct_aberration_native(field, config, precision=precision)
+    return correct_aberration_decomposed(field, config)

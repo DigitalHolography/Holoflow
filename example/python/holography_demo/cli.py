@@ -62,7 +62,9 @@ def _run_pipeline(config, stack, previous=None):
     started = time.perf_counter()
     graph = hf.trace(pipeline, config)
     artifacts = hf.Artifacts.create(config.graph["log_dir"]) if config.graph["enabled"] else None
-    run = stack.enter_context(graph._compile(artifacts, capture=False, previous=previous))
+    run = stack.enter_context(
+        graph._compile(artifacts, capture=config.graph.get("perfetto", False), previous=previous)
+    )
     run.start()
     duration = config.input["duration_seconds"]
     deadline = None if duration is None else time.monotonic() + duration
@@ -113,6 +115,8 @@ def run_demo(config):
             if label is not None:
                 print(f"{label} graph", flush=True)
             show_graph_report(artifacts.compiled_dot, config.graph["open_browser"])
+            if artifacts.perfetto.is_file():
+                print(f"Perfetto trace: {artifacts.perfetto}")
     return images
 
 

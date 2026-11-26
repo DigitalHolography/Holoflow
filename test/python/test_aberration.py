@@ -519,6 +519,7 @@ class HolographyDemoTest(unittest.TestCase):
             fixture.truncate(len(header) + size)
 
     def test_fp16_demo_traces_native_pipeline(self):
+        from dataclasses import replace
         from holography_demo.pipeline import pipeline
 
         self.write_fp16_fixture(128)
@@ -538,6 +539,23 @@ class HolographyDemoTest(unittest.TestCase):
         self.assertTrue(by_type["FFT2"]["prefer_fp16"])
         self.assertEqual(by_type["DualReaderBatchQueue"]["window_size"], 64)
         self.assertEqual(by_type["Memcpy"]["target"], "Device")
+
+        filtered = replace(config, spatial_filter={**config.spatial_filter, "enabled": True})
+        corrected = replace(
+            filtered, aberration={**filtered.aberration, "enabled": True}, correction_window=64
+        )
+        for settings, sm120 in ((filtered, True), (corrected, True), (corrected, False)):
+            with self.subTest(aberration=settings.aberration["enabled"], sm120=sm120):
+                with patch("holoflow._native.supports_sm120", return_value=sm120):
+                    nodes = hf.trace(pipeline, settings).to_json()["nodes"].values()
+                by_type = {node["type"]: node["params"] for node in nodes}
+                self.assertTrue(by_type["Filter2D"]["normalize"])
+                self.assertEqual(by_type["Filter2D"].get("use_fused_f16", False), sm120)
+                self.assertEqual(by_type["FFT2"].get("prefer_fp16", False),
+                                 sm120 or not settings.aberration["enabled"])
+                if settings.aberration["enabled"]:
+                    self.assertIn("ShortTimeFresnelDiffraction", by_type)
+                    self.assertEqual(by_type["CorrectPhase"].get("output_cf16", False), sm120)
 
     def test_fp16_finite_playback_drains_and_trims_complete_windows(self):
         from holography_demo.pipeline import pipeline
@@ -615,6 +633,24 @@ class HolographyDemoTest(unittest.TestCase):
         self.assertRegex(capture.getvalue(), r"Latency: [1-9][0-9,]* matched, 0 unmatched")
         self.assertIn("Trace-to-drain wall time", capture.getvalue())
         self.assertFalse((self.root / "logs").exists())
+
+    def test_cli_exports_perfetto_when_enabled(self):
+        from holoflow import _native
+        from holography_demo.cli import run_demo
+
+        if not _native.perfetto_available():
+            self.skipTest("Perfetto support is disabled")
+        config = self.config(
+            time={"method": "none"}, space={"method": "none"},
+            graph={"enabled": True, "perfetto": True, "log_dir": "traces",
+                   "open_browser": False},
+        )
+        with patch("holography_demo.graph.shutil.which", return_value=None), \
+                redirect_stdout(StringIO()) as output:
+            run_demo(config)
+        trace, = (self.root / "traces").glob("*/trace_events.perfetto-trace")
+        self.assertGreater(trace.stat().st_size, 0)
+        self.assertIn(str(trace.resolve()), output.getvalue())
 
     def test_compiled_graph_report_with_viewer_and_without_graphviz(self):
         from holography_demo.cli import run_demo

@@ -180,10 +180,15 @@ def remainder(x, y, *, node_id=None):
 
 
 def filter2d(x: Tensor, r_inner: int, r_outer: int, s_inner: int = 0,
-             s_outer: int = 1, *, node_id: str | None = None) -> Tensor:
+             s_outer: int = 1, *, use_fused_f16: bool = False, normalize: bool = False,
+             node_id: str | None = None) -> Tensor:
     """Radial spatial-frequency filter; radii and transition widths are in bins."""
-    return operation("Filter2D", (x,), dict(r_inner=r_inner, r_outer=r_outer,
-                     s_inner=s_inner, s_outer=s_outer), node_id)
+    settings = dict(r_inner=r_inner, r_outer=r_outer, s_inner=s_inner, s_outer=s_outer)
+    if use_fused_f16:
+        settings["use_fused_f16"] = True
+    if normalize:
+        settings["normalize"] = True
+    return operation("Filter2D", (x,), settings, node_id)
 
 
 def pct_clip(x: Tensor, min_pct: float, max_pct: float, *, roi_radius: float = 0.9,
@@ -247,8 +252,9 @@ def zernike_phase(coefficients, indexes, ny, nx, *, device="device", node_id=Non
         "indexes": list(indexes), "ny": ny, "nx": nx, "output": device.title()}, node_id)
 
 
-def correct_phase(x, phase, *, node_id=None):
-    return operation("CorrectPhase", (x, phase), {}, node_id)
+def correct_phase(x, phase, *, output_cf16=False, node_id=None):
+    settings = {"output_cf16": True} if output_cf16 else {}
+    return operation("CorrectPhase", (x, phase), settings, node_id)
 
 
 def normalize(x, axes=(-2, -1), lo=0.0, hi=255.0, *, node_id=None):

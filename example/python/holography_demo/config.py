@@ -64,7 +64,7 @@ def load_config(filename):
                        cao_coefficients_only=False, cao_compare_modes=False),
         "queues": dict(input_frames=1024, propagation_windows=8,
                        corrected_windows=2, output_images=32),
-        "graph": dict(enabled=False, log_dir="logs/python", open_browser=True),
+        "graph": dict(enabled=False, log_dir="logs/python", open_browser=True, perfetto=False),
     }
     raw = yaml.safe_load(filename.read_text(encoding="utf-8"))
     _check(isinstance(raw, dict), "config must be a YAML mapping")
@@ -122,9 +122,7 @@ def load_config(filename):
         _check(source["batch_size"] == 32 and time["method"] == "pca"
                and temporal_frames == 32 and end - begin <= 16,
                "time.precision: fp16 requires 32-frame input and PCA windows with at most 16 components")
-        _check(space["method"] == "fresnel" and not aberration["enabled"]
-               and not spatial_filter["enabled"],
-               "time.precision: fp16 requires Fresnel with aberration correction and spatial filtering disabled")
+        _check(space["method"] == "fresnel", "time.precision: fp16 requires native Fresnel")
     graph = defaults["graph"]
     post = defaults["postprocessing"]
     average_window = post["average_window"]
@@ -149,6 +147,8 @@ def load_config(filename):
                "Invalid postprocessing.percentile_clip bounds or ROI radius")
     for name, section in (("aberration", aberration), ("viewer", viewer), ("graph", graph)):
         _check(type(section["enabled"]) is bool, f"{name}.enabled must be a boolean")
+    _check(type(graph["perfetto"]) is bool, "graph.perfetto must be a boolean")
+    _check(not graph["perfetto"] or graph["enabled"], "graph.perfetto requires graph.enabled")
     _check(type(graph["open_browser"]) is bool, "graph.open_browser must be a boolean")
     _check(isinstance(graph["log_dir"], str) and graph["log_dir"].strip(), "graph.log_dir must be a path")
     graph["log_dir"] = (filename.parent / graph["log_dir"]).resolve()
