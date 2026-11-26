@@ -182,7 +182,7 @@ void ExportWidget::setup_ui() {
   queues_spin_ = create_spin_box(content_container_, 1, 5, 3);
   queues_spin_->setToolTip(
       tr("This is the number of queues for recording. The only configuration where it will be used "
-         "is when recording raw files with the AmetekS711."));
+         "is when recording raw images files in holofile format (.holo) with the camera."));
   layout->addWidget(queues_spin_, row, 1);
   ++row;
 
@@ -221,6 +221,7 @@ void ExportWidget::connect_signals() {
           &ExportWidget::settings_changed);
   connect(format_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) {
     update_codec_choices();
+    update_record_queue_count_spin();
     emit settings_changed();
   });
   connect(file_line_edit_, &QLineEdit::textChanged, this, &ExportWidget::file_path_changed);
@@ -280,4 +281,17 @@ void ExportWidget::update_codec_choices() {
   codec_combo_->setToolTip({});
 }
 
+void ExportWidget::set_camera_recording_enabled(bool enabled) {
+  camera_recording_enabled_ = enabled;
+  update_record_queue_count_spin();
+}
+
+void ExportWidget::update_record_queue_count_spin() {
+  if (camera_recording_enabled_ && get_format() == "holo" && get_image_type() == "Raw Image") {
+    queues_spin_->setEnabled(true);
+  } else {
+    queues_spin_->setValue(1);
+    queues_spin_->setEnabled(false);
+  }
+}
 } // namespace holovibes::ui
