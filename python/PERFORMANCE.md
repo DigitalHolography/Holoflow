@@ -44,7 +44,8 @@ for subaperture Fresnel propagation, phase synthesis and application, and diagno
 normalization. With task fusion enabled, the compiler uses cuFFT callbacks to
 load the non-overlapping tiles and apply the lens without a packing buffer.
 The compiler also fuses Zernike phase synthesis and application when the phase
-map is used only for correction. Conversion to and from half stays explicit.
+map is used only for correction. The fused task can read FP16 samples and write
+complex half directly, with phase math in FP32.
 Sensor averaging, flat-field filtering, slope estimation, and
 coefficient fitting use dedicated operators. The corrected field is cast to
 complex half on SM120 and stays complex FP32 elsewhere. The FP16 pipeline keeps

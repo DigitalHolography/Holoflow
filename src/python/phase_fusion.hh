@@ -85,18 +85,44 @@ inline std::optional<core::GraphSpec> lower_phase_tasks(const runtime::GraphPlan
     }
     if (!phase || !add_term(*phase))
       continue;
+    auto output_node = terminal;
+    bool output_cf16 = false;
+    if (exclusive(*field, "Conversion") && desc(*field).dtype == core::DType::F32 &&
+        graph[field->first].spec.settings.value("strategy", "") == std::string_view("Real")) {
+      auto original = input(field->first, 0);
+      if (original && desc(*original).dtype == core::DType::F16 &&
+          desc(*original).shape == desc(*field).shape &&
+          desc(*original).strides ==
+              core::TDesc(desc(*original).shape, core::DType::F16, desc(*original).mem_loc)
+                  .strides) {
+        absorbed.push_back(field->first);
+        field = original;
+        if (out_degree(terminal, graph) == 1) {
+          const auto  edge     = *out_edges(terminal, graph).first;
+          const auto  consumer = target(edge, graph);
+          const auto &cast     = graph[consumer].spec;
+          if (cast.kind == "Conversion" && graph[edge].spec.in_idx == 0 &&
+              cast.settings.value("strategy", "") == std::string_view("Real") &&
+              desc({consumer, 0}).dtype == core::DType::CF16) {
+            output_node = consumer;
+            output_cf16 = true;
+            absorbed.push_back(terminal);
+          }
+        }
+      }
+    }
     std::ranges::reverse(terms);
     terms.insert(terms.begin(), *field);
     std::vector<core::TDesc> inputs;
     for (auto port : terms)
       inputs.push_back(desc(port));
 
-    auto node     = graph[terminal].spec;
+    auto node     = graph[output_node].spec;
     node.kind     = "FusedPhaseCorrection";
-    node.settings = {{"scalar_real", scalar.at("value")}};
+    node.settings = {{"scalar_real", scalar.at("value")}, {"output_cf16", output_cf16}};
     try {
       const auto output = registry.get_sync(node.kind).infer(inputs, node.settings).output_descs[0];
-      const auto &original = desc({terminal, 0});
+      const auto &original = desc({output_node, 0});
       if (output.shape != original.shape || output.dtype != original.dtype ||
           output.strides != original.strides || output.offset != original.offset ||
           output.mem_loc != original.mem_loc)
@@ -111,7 +137,7 @@ inline std::optional<core::GraphSpec> lower_phase_tasks(const runtime::GraphPlan
     names.push_back(node.name);
     node.settings["absorbed"] = std::move(names);
     removed.insert(absorbed.begin(), absorbed.end());
-    replacements.emplace(terminal, Replacement{std::move(node), std::move(terms)});
+    replacements.emplace(output_node, Replacement{std::move(node), std::move(terms)});
   }
 
   if (replacements.empty())

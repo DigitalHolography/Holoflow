@@ -275,8 +275,8 @@ struct PhaseTerms {
   size_t       count;
 };
 
-template <typename Field>
-__global__ void fused_phase_kernel(const Field *field, cuFloatComplex *output, PhaseTerms terms,
+template <typename Field, typename Output>
+__global__ void fused_phase_kernel(const Field *field, Output *output, PhaseTerms terms,
                                    size_t pixels, size_t total, float scalar_real) {
   const size_t pixel = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   if (pixel >= pixels)
@@ -294,11 +294,15 @@ __global__ void fused_phase_kernel(const Field *field, cuFloatComplex *output, P
   const auto  rotation = make_cuFloatComplex(scale * cosine, scale * sine);
   for (size_t index = pixel; index < total; index += pixels) {
     auto value = make_cuFloatComplex(0.0f, 0.0f);
-    if constexpr (std::is_same_v<Field, float>)
-      value.x = field[index];
+    if constexpr (!std::is_same_v<Field, cuFloatComplex>)
+      value.x = static_cast<float>(field[index]);
     else
       value = field[index];
-    output[index] = cuCmulf(value, rotation);
+    const auto corrected = cuCmulf(value, rotation);
+    if constexpr (std::is_same_v<Output, __half2>)
+      output[index] = __floats2half2_rn(corrected.x, corrected.y);
+    else
+      output[index] = corrected;
   }
 }
 
@@ -327,7 +331,16 @@ public:
     const size_t       total  = field.desc.num_elements();
     constexpr unsigned block  = 256;
     const auto         grid   = static_cast<unsigned>((pixels + block - 1) / block);
-    if (field.desc.dtype == holoflow::core::DType::F32) {
+    if (field.desc.dtype == holoflow::core::DType::F16) {
+      const auto *half = reinterpret_cast<const __half *>(field.data());
+      if (ctx.outputs[0].desc.dtype == holoflow::core::DType::CF16)
+        fused_phase_kernel<<<grid, block, 0, stream_>>>(
+            half, reinterpret_cast<__half2 *>(ctx.outputs[0].data()), terms, pixels, total,
+            scalar_real_);
+      else
+        fused_phase_kernel<<<grid, block, 0, stream_>>>(half, output, terms, pixels, total,
+                                                        scalar_real_);
+    } else if (field.desc.dtype == holoflow::core::DType::F32) {
       fused_phase_kernel<<<grid, block, 0, stream_>>>(reinterpret_cast<const float *>(field.data()),
                                                       output, terms, pixels, total, scalar_real_);
     } else {
@@ -347,14 +360,17 @@ private:
 
 holoflow::core::InferResult
 FusedPhaseCorrectionFactory::infer(std::span<const holoflow::core::TDesc> inputs,
-                                   const nlohmann::json &) const {
+                                   const nlohmann::json                  &settings) const {
   using namespace holoflow::core;
   check(inputs.size() >= 3 && inputs.size() <= 1 + 2 * max_terms && inputs.size() % 2 == 1,
         "expected a field and one to nine basis/coefficient pairs");
-  const auto &field = inputs[0];
+  const auto &field       = inputs[0];
+  const bool  output_cf16 = settings.value("output_cf16", false);
   check(field.rank() >= 2 && field.num_elements() > 0 && field.mem_loc == MemLoc::Device &&
-            is_c_contiguous(field) && (field.dtype == DType::F32 || field.dtype == DType::CF32),
-        "expected a nonempty contiguous FP32 or complex FP32 device field");
+            is_c_contiguous(field) &&
+            (field.dtype == DType::F32 || field.dtype == DType::CF32 || field.dtype == DType::F16),
+        "expected a nonempty contiguous F16, F32 or CF32 device field");
+  check(!output_cf16 || field.dtype == DType::F16, "CF16 output requires an F16 field");
   const std::vector<size_t> spatial{field.shape[field.rank() - 2], field.shape.back()};
   for (size_t i = 1; i < inputs.size(); i += 2) {
     const auto &basis       = inputs[i];
@@ -366,12 +382,13 @@ FusedPhaseCorrectionFactory::infer(std::span<const holoflow::core::TDesc> inputs
               coefficient.shape == std::vector<size_t>{1},
           "expected a single FP32 coefficient");
   }
-  return {.input_descs   = {inputs.begin(), inputs.end()},
-          .output_descs  = {TDesc(field.shape, DType::CF32, MemLoc::Device)},
-          .in_place      = {},
-          .owned_inputs  = std::vector<bool>(inputs.size(), false),
-          .owned_outputs = {false},
-          .kind          = TaskKind::Sync};
+  return {
+      .input_descs  = {inputs.begin(), inputs.end()},
+      .output_descs = {TDesc(field.shape, output_cf16 ? DType::CF16 : DType::CF32, MemLoc::Device)},
+      .in_place     = {},
+      .owned_inputs = std::vector<bool>(inputs.size(), false),
+      .owned_outputs = {false},
+      .kind          = TaskKind::Sync};
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
