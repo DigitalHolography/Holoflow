@@ -18,12 +18,12 @@
 #include <cstdlib>
 #include <list>
 #include <ranges>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 #include <math_constants.h>
 
-#include "bug.hh"
 #include "logger.hh"
 
 #include "curaii/cuda.hh"
@@ -91,8 +91,11 @@ struct STFTCallerInfo {
   float          *magnitude_output;
 };
 
-__global__ void set_stft_magnitude_output_kernel(STFTCallerInfo *info, float *output) {
+__global__ void set_stft_magnitude_output_kernel(STFTCallerInfo *info, float *output,
+                                                 cuFloatComplex *lens) {
   info->magnitude_output = output;
+  if (lens)
+    info->precomputed_lens = lens;
 }
 
 // Shared header for both callback variants.
@@ -182,7 +185,8 @@ using holoflow::runtime::detail::configure_callback_plan;
 
 CachedLto compile_lto(const std::string &src, const std::string &name) {
   auto CUDA_PATH = std::getenv("CUDA_PATH");
-  HOLOVIBES_CHECK(CUDA_PATH != nullptr, "CUDA_PATH environment variable not set");
+  if (CUDA_PATH == nullptr)
+    throw std::runtime_error("CUDA_PATH environment variable not set");
 
   std::vector<std::string> args_str = {
       "-I" + std::string{CUDA_PATH} + "/include",
@@ -579,7 +583,9 @@ holoflow::core::OpResult ShortTimeFresnelDiffraction::execute(holoflow::core::Sy
   if (im.stream == nullptr)
     return enqueue(ctx);
 
-  const detail::FresnelCudaGraph::Addresses addresses{ctx.inputs[0].data(), ctx.outputs[0].data()};
+  const detail::FresnelCudaGraph::Addresses addresses{ctx.inputs[0].data(), ctx.outputs[0].data(),
+                                                      ctx.inputs.size() == 2 ? ctx.inputs[1].data()
+                                                                             : nullptr};
   cudaStreamCaptureStatus                   capture_status = cudaStreamCaptureStatusNone;
   CUDA_CHECK(cudaStreamIsCapturing(im.stream, &capture_status));
   if (capture_status != cudaStreamCaptureStatusNone)
@@ -622,7 +628,9 @@ holoflow::core::OpResult ShortTimeFresnelDiffraction::enqueue(holoflow::core::Sy
     if (im.settings.output_magnitude) {
       auto *magnitude_output = reinterpret_cast<float *>(out_ptr);
       set_stft_magnitude_output_kernel<<<1, 1, 0, im.stream>>>(
-          static_cast<STFTCallerInfo *>(im.d_caller_info.get()), magnitude_output);
+          static_cast<STFTCallerInfo *>(im.d_caller_info.get()), magnitude_output,
+          ctx.inputs.size() == 2 ? reinterpret_cast<cuFloatComplex *>(ctx.inputs[1].data())
+                                 : nullptr);
       fft_out = im.d_fft_output.get();
     }
 
@@ -703,10 +711,28 @@ std::unique_ptr<holoflow::core::ISyncTask>
 ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                                            const nlohmann::json                  &jsettings,
                                            const holoflow::core::SyncCreateCtx   &ctx) const {
-  auto inf = this->infer(input_descs, jsettings);
+  check(input_descs.size() == 1, "expected exactly one input");
+  return create_with_lens(input_descs, jsettings, ctx);
+}
+
+std::unique_ptr<holoflow::core::ISyncTask> ShortTimeFresnelDiffractionFactory::create_with_lens(
+    std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+    const holoflow::core::SyncCreateCtx &ctx) const {
+  check(input_descs.size() == 1 || input_descs.size() == 2, "expected a field and optional lens");
+  auto inf = this->infer(input_descs.first(1), jsettings);
   auto s   = jsettings.get<ShortTimeFresnelDiffractionSettings>();
 
-  const auto &idesc = input_descs[0];
+  const auto &idesc         = input_descs[0];
+  const bool  external_lens = input_descs.size() == 2;
+  if (external_lens) {
+    const auto               &lens = input_descs[1];
+    const std::vector<size_t> spatial_shape{idesc.shape[idesc.rank() - 2], idesc.shape.back()};
+    check(s.phase_ref == STFDPhaseReference::GLOBAL && s.output_magnitude,
+          "external lens requires global phase reference and magnitude output");
+    check(lens.shape == spatial_shape && lens.dtype == holoflow::core::DType::CF32 &&
+              lens.mem_loc == holoflow::core::MemLoc::Device && is_c_contiguous(lens),
+          "external lens must be contiguous complex FP32 on the field's spatial grid");
+  }
   const auto &odesc = inf.output_descs[0];
   const int   rank  = static_cast<int>(idesc.rank());
   auto [ax0, ax1]   = normalize_axes(s, rank);
@@ -758,8 +784,10 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
   // -- Caller-info struct & Precomputation ------------------------------------------------------
   auto input_lens = input_lens_geometry(s, W, H);
   auto d_input_lens =
-      make_input_lens(input_lens.width, input_lens.height, s.dx, s.dy, input_lens.x_origin,
-                      input_lens.y_origin, s.lambda, s.z, ctx.stream);
+      external_lens
+          ? DevPtr<cuFloatComplex>{}
+          : make_input_lens(input_lens.width, input_lens.height, s.dx, s.dy, input_lens.x_origin,
+                            input_lens.y_origin, s.lambda, s.z, ctx.stream);
 
   STFTCallerInfo info{
       .precomputed_lens = d_input_lens.get(),

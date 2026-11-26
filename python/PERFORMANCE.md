@@ -39,9 +39,14 @@ modes. Finite playback needs at least four PCA windows and warns if it drops
 up to three complete windows at EOF to keep groups of four. It uses the
 scheduler's finite draining mode. The FP16 pipeline uses batched PCA, FP16
 projection, and fused Fresnel magnitude reduction. Optional spatial filtering
-uses normalized output. Optional aberration correction uses native operators
-and produces complex half on SM120 or complex FP32 elsewhere. It keeps the headless output on the GPU, so its
-latency ends at GPU output completion. The default `time.precision: fp32` keeps
+uses normalized output. Optional aberration correction composes graph operations
+for subaperture Fresnel propagation, phase synthesis and application, and diagnostic
+normalization. With task fusion enabled, the compiler uses cuFFT callbacks to
+load the non-overlapping tiles and apply the lens without a packing buffer.
+Sensor averaging, flat-field filtering, slope estimation, and
+coefficient fitting use dedicated operators. The corrected field is cast to
+complex half on SM120 and stays complex FP32 elsewhere. The FP16 pipeline keeps
+the headless output on the GPU, so its latency ends at GPU output completion. The default `time.precision: fp32` keeps
 the existing host output path.
 
 Older configs can still include `time.batch_windows` and

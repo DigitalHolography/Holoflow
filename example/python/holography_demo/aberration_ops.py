@@ -17,6 +17,8 @@ def subaperture_fresnel(field, wavelength, dx, dy, z, win_h, win_w, stride_y, st
     leading = field.shape[:-2]
     height, width = field.shape[-2:]
     rows, columns = height // win_h, width // win_w
+    if field.dtype == hf.float16:
+        field = field.astype(hf.float32)
     phased = field * quadratic_lens(height, width, wavelength, dx, dy, z)
     if height % win_h or width % win_w:
         crop = (slice(None),) * len(leading) + (
@@ -80,8 +82,11 @@ def zernike_phase(coefficients, modes, height, width):
     return phase
 
 
-def apply_phase(field, phase):
-    return field * hf.exp(-1j * phase)
+def apply_phase(field, phase, *, output_cf16=False):
+    if field.dtype == hf.float16:
+        field = field.astype(hf.float32)
+    corrected = field * hf.exp(-1j * phase)
+    return corrected.astype(hf.DType.complex32) if output_cf16 else corrected
 
 
 def normalize(image, axes, lo, hi):

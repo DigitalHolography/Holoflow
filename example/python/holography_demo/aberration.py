@@ -125,30 +125,31 @@ def _correct_aberration(field, config, *, subaperture_fresnel, zernike_phase, ap
     return corrected, diagnostics
 
 
+def _uses_complex_half(field, precision):
+    return precision == "fp16" and field.dtype == hf.float16 and _native.supports_sm120()
+
+
 def correct_aberration_native(field, config, *, precision="fp32"):
-    output_cf16 = precision == "fp16" and field.dtype == hf.float16 and _native.supports_sm120()
     return _correct_aberration(
         field,
         config,
         subaperture_fresnel=hf.short_time_fresnel_diffraction,
         zernike_phase=hf.zernike_phase,
-        apply_phase=partial(hf.correct_phase, output_cf16=output_cf16),
+        apply_phase=partial(hf.correct_phase, output_cf16=_uses_complex_half(field, precision)),
         normalize=hf.normalize,
     )
 
 
-def correct_aberration_decomposed(field, config):
+def correct_aberration_decomposed(field, config, *, precision="fp32"):
     return _correct_aberration(
         field,
         config,
         subaperture_fresnel=aberration_ops.subaperture_fresnel,
         zernike_phase=aberration_ops.zernike_phase,
-        apply_phase=aberration_ops.apply_phase,
+        apply_phase=partial(aberration_ops.apply_phase, output_cf16=_uses_complex_half(field, precision)),
         normalize=aberration_ops.normalize,
     )
 
 
 def correct_aberration(field, config, *, precision="fp32"):
-    if precision == "fp16":
-        return correct_aberration_native(field, config, precision=precision)
-    return correct_aberration_decomposed(field, config)
+    return correct_aberration_decomposed(field, config, precision=precision)

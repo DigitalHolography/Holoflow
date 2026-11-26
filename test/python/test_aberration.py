@@ -414,7 +414,8 @@ class HolographyDemoTest(unittest.TestCase):
                 native_phase.reshape((1, 16, 21)),
                 phase.reshape((1, 16, 21)),
             ]
-            for field in (real, real * (1 + 0.5j)):
+            half = real.astype(hf.float16)
+            for field in (real, real * (1 + 0.5j), half):
                 args = (field, 851e-9, 20e-6, 20e-6, 0.49, 5, 6, 5, 6)
                 outputs.extend((
                     hf.short_time_fresnel_diffraction(*args),
@@ -422,6 +423,10 @@ class HolographyDemoTest(unittest.TestCase):
                     hf.correct_phase(field, phase),
                     aberration_ops.apply_phase(field, phase),
                 ))
+            outputs.extend((
+                hf.correct_phase(half, phase, output_cf16=True).astype(hf.complex64),
+                aberration_ops.apply_phase(half, phase, output_cf16=True).astype(hf.complex64),
+            ))
             return tuple(hf.sinks.numpy(output) for output in outputs)
 
         with hf.trace(compare).compile() as run:
@@ -431,6 +436,55 @@ class HolographyDemoTest(unittest.TestCase):
         for native, decomposed in zip(outputs[::2], outputs[1::2]):
             np.testing.assert_allclose(decomposed, native, rtol=2e-4,
                                        atol=2e-6 * np.max(np.abs(native)))
+
+    def test_tiled_fft_fusion_matches_primitives(self):
+        from holography_demo.aberration_ops import subaperture_fresnel
+
+        def trace_tiles(path, win_h, win_w):
+            field = hf.sources.holofile(path, batch_size=2, loop=False).to("device")
+            real = field.astype(hf.float32)
+            return tuple(
+                hf.sinks.numpy(subaperture_fresnel(
+                    value, 851e-9, 20e-6, 20e-6, 0.49, win_h, win_w, win_h, win_w
+                ))
+                for value in (real, real.astype(hf.float16), real * (1 + 0.5j))
+            )
+
+        for height, width, win_h, win_w in ((16, 21, 5, 6), (320, 512, 64, 102),
+                                             (5, 263, 2, 131)):
+            with self.subTest(tile=(win_h, win_w)):
+                path = self.root / f"tiles_{width}.holo"
+                write_holo(path, frames=4, width=width, height=height)
+                graph = hf.trace(trace_tiles, path, win_h, win_w)
+                results = []
+                for enabled in (False, True):
+                    with graph.compile(log_dir=self.root / "tiles", fuse_tasks=enabled) as run:
+                        run.start()
+                        results.append(run.result())
+                        dot = run.artifacts.compiled_dot.read_text(encoding="utf-8")
+                        self.assertEqual(dot.count("tiled cuFFT callbacks"), 3 if enabled else 0)
+                for expected, actual in zip(*results, strict=True):
+                    np.testing.assert_allclose(actual, expected, rtol=2e-4,
+                                               atol=2e-6 * np.max(np.abs(expected)))
+
+    def test_tiled_fft_fusion_leaves_shared_pack_available(self):
+        from holography_demo.propagation import quadratic_lens
+
+        def trace_tiles():
+            field = hf.sources.holofile(self.root / "input.holo", batch_size=5, loop=False)
+            field = field.to("device").astype(hf.float32)
+            phased = field * quadratic_lens(20, 20, 851e-9, 20e-6, 20e-6, 0.49)
+            tiles = phased.reshape((5, 4, 5, 4, 5), copy=False).transpose(0, 1, 3, 2, 4)
+            packed = tiles.reshape(tiles.shape, copy=True)
+            return hf.sinks.numpy(hf.abs(hf.fft.fft2(packed))), hf.sinks.numpy(packed)
+
+        with hf.trace(trace_tiles).compile(log_dir=self.root / "shared_tiles") as run:
+            run.start()
+            magnitude, packed = run.result()
+            dot = run.artifacts.compiled_dot.read_text(encoding="utf-8")
+        self.assertNotIn("tiled cuFFT callbacks", dot)
+        np.testing.assert_allclose(magnitude, np.abs(np.fft.fft2(packed)), rtol=2e-4,
+                                   atol=2e-6 * np.max(magnitude))
 
     def test_decomposed_normalization_matches_native(self):
         from holography_demo.aberration_ops import normalize
@@ -575,7 +629,7 @@ class HolographyDemoTest(unittest.TestCase):
             fixture.write(header)
             fixture.truncate(len(header) + size)
 
-    def test_fp16_demo_traces_native_pipeline(self):
+    def test_fp16_demo_traces_decomposed_pipeline(self):
         from dataclasses import replace
         from holography_demo.pipeline import pipeline
 
@@ -609,11 +663,38 @@ class HolographyDemoTest(unittest.TestCase):
                 by_type = {node["type"]: node["params"] for node in nodes}
                 self.assertTrue(by_type["Filter2D"]["normalize"])
                 self.assertEqual(by_type["Filter2D"].get("use_fused_f16", False), sm120)
-                self.assertEqual(by_type["FFT2"].get("prefer_fp16", False),
-                                 sm120 or not settings.aberration["enabled"])
+                self.assertEqual(any(node["type"] == "FFT2" and node["params"].get("prefer_fp16")
+                                     for node in nodes), sm120 or not settings.aberration["enabled"])
                 if settings.aberration["enabled"]:
-                    self.assertIn("ShortTimeFresnelDiffraction", by_type)
-                    self.assertEqual(by_type["CorrectPhase"].get("output_cf16", False), sm120)
+                    fused_kinds = {"ShortTimeFresnelDiffraction", "ZernikePhase", "CorrectPhase"}
+                    self.assertTrue(fused_kinds.isdisjoint(by_type))
+                    self.assertIn("Exp", by_type)
+                    self.assertEqual(any(node["type"] == "Conversion" and node["params"]["target"] == "CF16"
+                                         for node in nodes), sm120)
+
+    def test_fp16_finite_aberration_output_counts(self):
+        from holography_demo.pipeline import pipeline
+
+        self.write_fp16_fixture(128)
+        config = self.config(
+            input={"path": "fp16.holo", "batch_size": 32, "end_frame": 128},
+            time={"precision": "fp16", "window_frames": 32, "component_end": 4},
+            aberration={"enabled": True},
+            postprocessing={"average_window": 2},
+            viewer={"enabled": True, "cao_diagnostics": True},
+        )
+        with hf.trace(pipeline, config).compile(log_dir=self.root / "fp16_tiles", capture=False) as run:
+            run.start()
+            outputs = run.result()
+            self.assertTrue(run.completed())
+            dot = run.artifacts.compiled_dot.read_text(encoding="utf-8")
+        self.assertIn("tiled cuFFT callbacks", dot)
+        if hf._native.supports_sm120():
+            self.assertIn("SM120 cuFFTDx", dot)
+        self.assertEqual(outputs["xy"].shape, (2, 320, 512))
+        self.assertEqual(outputs["coefficients"].shape, (4, 3))
+        self.assertEqual(outputs["phase"].shape, (4, 320, 512))
+        self.assertEqual(outputs["shack_hartmann"].shape, (4, 320, 510))
 
     def test_fused_matmul_returns_full_gram(self):
         self.write_fp16_fixture(32)
