@@ -43,6 +43,8 @@ public:
   GraphBuilder &operator=(const GraphBuilder &) = delete;
 
   holoflow::core::GraphSpec build();
+  [[nodiscard]] std::size_t frame_bytes() const noexcept;
+  [[nodiscard]] std::size_t target_frames_per_batch() const noexcept;
 
   /// Return the partial graph when a task rejects its input during graph construction.
   [[nodiscard]] std::string failure_graph_dot(

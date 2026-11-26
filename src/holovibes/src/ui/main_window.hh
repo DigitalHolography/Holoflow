@@ -63,6 +63,9 @@ private slots:
   void on_import_start_clicked();
   void on_import_stop_clicked();
   void on_metrics_updated(double input_fps);
+  void on_memory_metrics_updated(qulonglong used_vram, qulonglong total_vram,
+                                 qulonglong used_ram, qulonglong total_ram,
+                                 qulonglong frame_bytes, qulonglong target_frames_per_batch);
   void on_export_record_clicked();
   void on_export_stop_clicked();
   void on_raw_record_started_success();

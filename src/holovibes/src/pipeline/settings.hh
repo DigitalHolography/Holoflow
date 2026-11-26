@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <array>
 #include <filesystem>
 #include <optional>
 #include <variant>
@@ -67,12 +68,11 @@ enum class MomentType {
 
 struct Settings {
   // Advanced
-  int cpu_in_size;
-  int gpu_in_size;
-  int cpu_rec_size;
-  int cpu_out_size;
-  int gpu_out_size;
   bool queue_sizing_auto = false;
+  int max_vram_percent = 90;
+  int max_ram_percent = 75;
+  int target_frames_per_batch = 0; // 0 selects the frame-size-derived default.
+  std::array<int, 6> memory_share_plan{35, 15, 15, 15, 10, 10};
   int time_accumulation;
 
   // Import

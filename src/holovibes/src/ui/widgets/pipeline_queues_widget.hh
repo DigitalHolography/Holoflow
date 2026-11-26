@@ -18,6 +18,7 @@
 #include <QGroupBox>
 #include <QLabel>
 #include <QSpinBox>
+#include <array>
 
 namespace holovibes::ui {
 
@@ -26,11 +27,12 @@ class PipelineQueuesWidget : public QGroupBox {
 public:
   explicit PipelineQueuesWidget(QWidget *parent = nullptr);
   bool is_queue_sizing_auto() const;
-  int get_gpu_in_queue_size() const;
-  int get_gpu_out_queue_size() const;
-  int get_cpu_out_queue_size() const;
   void set_queue_sizing_auto(bool enabled);
-  void set_queue_sizes(int gpu_in, int gpu_out, int cpu_out);
+  int max_vram_percent() const;
+  int max_ram_percent() const;
+  int target_frames_per_batch() const;
+  std::array<int, 6> memory_share_plan() const;
+  void set_planner_settings(int max_vram, int max_ram, int target_frames, const std::array<int, 6>& shares);
 
 signals:
   void settings_changed();
@@ -38,12 +40,13 @@ signals:
 private:
   void update_queue_size_visibility();
   QCheckBox *queue_sizing_auto_check_;
-  QLabel *gpu_in_queue_label_;
-  QLabel *gpu_out_queue_label_;
-  QLabel *cpu_out_queue_label_;
-  QSpinBox *gpu_in_queue_spin_;
-  QSpinBox *gpu_out_queue_spin_;
-  QSpinBox *cpu_out_queue_spin_;
+  QLabel *target_batch_label_;
+  QSpinBox *max_vram_spin_;
+  QSpinBox *max_ram_spin_;
+  QSpinBox *target_batch_spin_;
+  std::array<QSpinBox*, 6> share_spins_{};
+  QLabel *share_label_;
+  bool valid_shares() const;
 };
 
 } // namespace holovibes::ui

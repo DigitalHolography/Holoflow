@@ -15,7 +15,11 @@
 #include "ui/widgets/system_monitor_widget.hh"
 
 #include <QLabel>
+#include <QScrollArea>
+#include <QFrame>
 #include <QVBoxLayout>
+#include <QWidget>
+#include <QGridLayout>
 #include <algorithm>
 
 namespace holovibes::ui {
@@ -40,6 +44,7 @@ void SystemMonitorWidget::set_gpu_throughput(const QString &text) {
 }
 void SystemMonitorWidget::set_ram_usage(const QString &text) { ram_usage_value_->setText(text); }
 void SystemMonitorWidget::set_vram_usage(const QString &text) { vram_usage_value_->setText(text); }
+void SystemMonitorWidget::set_batch_info(const QString &text) { batch_info_value_->setText(text); }
 void SystemMonitorWidget::set_dropped_frames(const QString &text) {
   dropped_frames_value_->setText(text);
 }
@@ -48,8 +53,15 @@ void SystemMonitorWidget::set_pipeline_latency(const QString &text) {
 }
 
 void SystemMonitorWidget::setup_ui() {
-  auto *layout = new QVBoxLayout(this);
-  layout->setContentsMargins(0, 0, 0, 0);
+  auto *outer_layout = new QVBoxLayout(this);
+  outer_layout->setContentsMargins(4, 4, 4, 4);
+  auto *scroll_area = new QScrollArea(this);
+  scroll_area->setWidgetResizable(true);
+  scroll_area->setFrameShape(QFrame::NoFrame);
+  scroll_area->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  auto *content = new QWidget(scroll_area);
+  auto *layout = new QVBoxLayout(content);
+  layout->setContentsMargins(2, 2, 2, 2);
   layout->setSpacing(8);
 
   // Line metrics
@@ -62,25 +74,28 @@ void SystemMonitorWidget::setup_ui() {
   auto add_metric_row = [&](int row, const QString &label, QLabel **value_label,
                             const QString &value) {
     auto *name_label = new QLabel(label, this);
-    name_label->setMinimumWidth(0);
-    name_label->setWordWrap(true);
+    name_label->setMinimumWidth(116);
+    name_label->setMinimumHeight(24);
+    name_label->setWordWrap(false);
     metrics_layout->addWidget(name_label, row, 0);
     *value_label = new QLabel(value, this);
-    (*value_label)->setMinimumWidth(0);
+    (*value_label)->setMinimumWidth(110);
+    (*value_label)->setMinimumHeight(24);
     (*value_label)->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     metrics_layout->addWidget(*value_label, row, 1);
   };
 
   add_metric_row(0, "GPU Load:", &gpu_load_value_, "N/A");
   add_metric_row(1, "CPU Load:", &cpu_load_value_, "N/A");
-  add_metric_row(2, "Input Throughput (FPS):", &input_throughput_fps_value_, "N/A");
-  add_metric_row(3, "Input Throughput (Bytes):", &input_throughput_bytes_value_, "N/A");
+  add_metric_row(2, "Input FPS:", &input_throughput_fps_value_, "N/A");
+  add_metric_row(3, "Input Data:", &input_throughput_bytes_value_, "N/A");
   add_metric_row(4, "CPU Throughput:", &cpu_throughput_value_, "N/A");
   add_metric_row(5, "GPU Throughput:", &gpu_throughput_value_, "N/A");
   add_metric_row(6, "RAM Usage:", &ram_usage_value_, "N/A");
   add_metric_row(7, "VRAM Usage:", &vram_usage_value_, "N/A");
   add_metric_row(8, "Dropped Frames:", &dropped_frames_value_, "N/A");
-  add_metric_row(9, "Pipeline Latency:", &pipeline_latency_value_, "N/A");
+  add_metric_row(9, "Latency:", &pipeline_latency_value_, "N/A");
+  add_metric_row(10, "Target / frames:", &batch_info_value_, "N/A");
 
   layout->addLayout(metrics_layout);
 
@@ -119,6 +134,9 @@ void SystemMonitorWidget::setup_ui() {
   });
 
   layout->addWidget(queue_group);
+  content->setMinimumWidth(245);
+  scroll_area->setWidget(content);
+  outer_layout->addWidget(scroll_area);
 }
 
 void SystemMonitorWidget::start_pipeline_progress_bar(int estimated_time) {

@@ -119,6 +119,9 @@ signals:
 
   // Metric signals
   void metrics_updated(double input_fps);
+  void memory_metrics_updated(qulonglong used_vram, qulonglong total_vram, qulonglong used_ram,
+                              qulonglong total_ram, qulonglong frame_bytes,
+                              qulonglong target_frames_per_batch);
 
   // Recording signals
   void raw_record_started_success();
@@ -190,6 +193,8 @@ private:
 
   // --- State & Configuration ---
   Settings s_;
+  std::size_t planned_frame_bytes_ = 0;
+  std::size_t effective_batch_frames_ = 0;
   int      src_width_  = 0;
   int      src_height_ = 0;
 

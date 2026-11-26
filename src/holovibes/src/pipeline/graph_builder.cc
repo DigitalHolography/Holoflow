@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <numbers>
 #include <numeric>
 #include <optional>
@@ -42,6 +43,7 @@
 #include "graph_builder_tasks.hh"
 #include "logger.hh"
 #include "pipeline/settings.hh"
+#include "pipeline/BatchPlanner.hh"
 #include "settings_loader.hh"
 
 namespace holovibes::pipeline {
@@ -61,6 +63,10 @@ public:
   [[nodiscard]] std::string
   failure_graph_dot(const holoflow::core::GraphSpecDumpPreferences &prefs) const {
     return GraphBuilderTracer::failure_graph_dot(prefs);
+  }
+  [[nodiscard]] size_t frame_bytes() const noexcept { return frame_bytes_; }
+  [[nodiscard]] size_t target_frames_per_batch() const noexcept {
+    return planner_ ? planner_->target_frames_per_batch() : 0;
   }
 
 private:
@@ -153,6 +159,7 @@ private:
   size_t                      total_ram_     = 0;
   size_t                      vram_headroom_ = 0;
   size_t                      ram_headroom_  = 0;
+  std::unique_ptr<BatchPlanner> planner_;
 
   std::map<LoadMethod, holotask::sources::HolofileSettings::LoadKind> load_method_map_{
       {LoadMethod::READ_LIVE, holotask::sources::HolofileSettings::LoadKind::Live},
@@ -167,20 +174,11 @@ private:
 
 namespace {
 
-constexpr size_t kMaxVramUsagePercent    = 99;
-constexpr size_t kGpuInputFreeVramPercent = 75;
-constexpr size_t kRamHeadroomMinimum     = 256ULL * 1024 * 1024;
-constexpr size_t kHeadroomPercent        = 10;
-
 // AUTO sizes each queue from a byte budget: large input frames receive shallow queues, while
 // smaller frames can use more slots up to a queue-specific ceiling. Floors preserve the
 // manual-mode safety capacities and BatchQueue's batch/stride slot-alignment requirements.
 // SlidingAverage also accounts for its window ring and running-average scratch buffer.
-constexpr size_t kQueueMinimumBytes          = 1ULL * 1024 * 1024;
-constexpr size_t kIntermediateTargetBytes   = 16ULL * 1024 * 1024;
-constexpr size_t kDisplayTargetBytes         = 8ULL * 1024 * 1024;
-constexpr size_t kCpuOutputTargetBytes       = 8ULL * 1024 * 1024;
-constexpr size_t kSlidingTargetBytes         = 16ULL * 1024 * 1024;
+constexpr size_t kSlidingTargetBytes = 16ULL * 1024 * 1024;
 
 size_t automatic_queue_depth(size_t bytes_per_frame, size_t target_bytes, size_t floor,
                              size_t ceiling) {
@@ -212,6 +210,12 @@ std::pair<float, float> post_propagation_pitch(const Settings              &sett
 // -------------------------------------------------------------------------------------------------
 // Initialization
 // -------------------------------------------------------------------------------------------------
+
+size_t GraphBuilder::frame_bytes() const noexcept { return impl_->frame_bytes(); }
+
+size_t GraphBuilder::target_frames_per_batch() const noexcept {
+  return impl_->target_frames_per_batch();
+}
 
 GraphBuilder::GraphBuilder(const Settings &settings, holoflow::core::Registry &registry)
     : impl_(std::make_unique<Impl>(settings, registry)) {}
@@ -248,12 +252,13 @@ void GraphBuilder::Impl::start_queue_plan(size_t frame_bytes) {
   }
   free_ram_      = static_cast<size_t>(memory_status.ullAvailPhys);
   total_ram_     = static_cast<size_t>(memory_status.ullTotalPhys);
-  const size_t maximum_vram_usage = total_vram_ / 100 * kMaxVramUsagePercent;
   const size_t used_vram = total_vram_ > free_vram_ ? total_vram_ - free_vram_ : 0;
-  const size_t remaining_vram_budget =
-      maximum_vram_usage > used_vram ? maximum_vram_usage - used_vram : 0;
-  vram_headroom_ = free_vram_ - std::min(free_vram_, remaining_vram_budget);
-  ram_headroom_  = std::max(kRamHeadroomMinimum, free_ram_ * kHeadroomPercent / 100);
+  planner_ = std::make_unique<BatchPlanner>(frame_bytes_, s_.target_frames_per_batch,
+      s_.max_vram_percent, s_.max_ram_percent, s_.memory_share_plan,
+      BatchPlannerMemory{total_vram_, used_vram, total_ram_, total_ram_ - free_ram_},
+      s_.queue_sizing_auto);
+  vram_headroom_ = free_vram_ > planner_->budget(true) ? free_vram_ - planner_->budget(true) : 0;
+  ram_headroom_ = free_ram_ > planner_->budget(false) ? free_ram_ - planner_->budget(false) : 0;
 }
 
 size_t GraphBuilder::Impl::add_queue_plan(std::string name, bool device, size_t requested_depth,
@@ -288,43 +293,28 @@ GraphBuilder::Impl::planned_batch_queue(const char *name, const TDesc &desc, siz
   const size_t element_size = desc.num_bytes() / input_batch;
   const std::string queue_name(name);
   const bool gpu_input = queue_name.find("GPU input") != std::string::npos;
-  size_t target_bytes =
-      queue_name.find("display") != std::string::npos   ? kDisplayTargetBytes
-      : queue_name.find("recording") != std::string::npos ? kCpuOutputTargetBytes
-                                                          : kIntermediateTargetBytes;
-  if (gpu_input) {
-    const size_t available_vram = free_vram_ > vram_headroom_ ? free_vram_ - vram_headroom_ : 0;
-    // The queue targets half of free VRAM without exceeding the 99% total-usage limit.
-    target_bytes = std::min(free_vram_ / 100 * kGpuInputFreeVramPercent, available_vram);
-  }
-  const size_t total_vram_depth = element_size == 0
-                                      ? 1
-                                      : (total_vram_ / 100 * kMaxVramUsagePercent) / element_size;
-  const size_t maximum_depth = gpu_input ? std::max<size_t>(1, total_vram_depth)
-                               : queue_name.find("display") != std::string::npos ? 4
-                               : queue_name.find("recording") != std::string::npos ? 8
-                                                                                   : 8;
-  // Keep the time-frequency queue's algorithm-determined floor and ceiling unchanged.
+  const size_t share_index = gpu_input ? 0
+      : queue_name == "time-frequency input" ? 1
+      : queue_name.find("display") != std::string::npos ? 4
+      : queue_name.find("recording") != std::string::npos ? 5 : 0;
+  const bool device = desc.mem_loc == holoflow::core::MemLoc::Device;
+  const size_t target_bytes = planner_->queue_budget(device, share_index);
+  const size_t maximum_depth = queue_name.find("display") != std::string::npos ? 4
+                               : queue_name.find("recording") != std::string::npos ? 8 : 64;
   const bool fixed_time_frequency = queue_name == "time-frequency input";
-  const size_t floor_bytes = std::min(kQueueMinimumBytes, target_bytes);
-  const size_t byte_floor = element_size == 0
-                                ? 1
-                                : std::max<size_t>(1, (floor_bytes + element_size - 1) / element_size);
-  const size_t byte_ceiling = element_size == 0 ? 1 : std::max<size_t>(1, target_bytes / element_size);
-  const size_t floor = fixed_time_frequency ? minimum_depth
-                       : s_.queue_sizing_auto ? std::min(byte_floor, byte_ceiling)
-                                              : requested_depth;
-  const size_t ceiling = fixed_time_frequency
-                             ? std::max(floor, requested_depth)
-                             : s_.queue_sizing_auto
-                                   ? std::max(floor, std::min(maximum_depth, byte_ceiling))
-                                   : std::max(floor, requested_depth);
-  const size_t depth   = s_.queue_sizing_auto
-                             ? automatic_queue_depth(element_size, target_bytes, floor, ceiling)
-                             : requested_depth;
+  BatchQueueRequest request{queue_name, device, element_size, requested_depth,
+      fixed_time_frequency ? minimum_depth : 1,
+      fixed_time_frequency ? std::max(maximum_depth, requested_depth) : maximum_depth, 1, 0,
+      share_index, s_.queue_sizing_auto};
+  size_t depth = s_.queue_sizing_auto ? planner_->depth_for(request) : requested_depth;
+  if (gpu_input && s_.target_frames_per_batch <= 0)
+    depth = std::min(depth, planner_->target_frames_per_batch());
+  if (fixed_time_frequency)
+    depth = std::max(depth, minimum_depth);
+  const size_t floor = fixed_time_frequency ? minimum_depth : 1;
+  const size_t ceiling = std::max(depth, maximum_depth);
   const size_t slots  = aligned_batch_slots(input_batch, static_cast<size_t>(output_stride), depth);
   auto         queued = batched_queue(desc, {static_cast<int>(depth), output_size, output_stride});
-  const bool   device = desc.mem_loc == holoflow::core::MemLoc::Device;
   queue_plan_.push_back({name, device, depth, slots, element_size, 0, slots * element_size, floor,
                          ceiling, input_batch, static_cast<size_t>(output_stride), 0, false,
                          s_.queue_sizing_auto, target_bytes, queued.producer->vertex});
@@ -400,9 +390,20 @@ void GraphBuilder::Impl::finish_queue_plan() {
                                   : "algorithm-determined")
            << ", floor=" << entry.floor << ", ceiling=" << entry.ceiling << ") ";
   }
-  if (vram > (free_vram_ > vram_headroom_ ? free_vram_ - vram_headroom_ : 0) ||
-      ram > (free_ram_ > ram_headroom_ ? free_ram_ - ram_headroom_ : 0)) {
-    throw_queue_plan_error("queue plan exceeds available memory");
+  for (const auto &entry : queue_plan_) {
+    const size_t share_index = entry.name == "time-frequency input" ? 1
+        : entry.name == "timing dual-reader" ? 2
+        : entry.name == "sliding average" ? 3
+        : entry.name.find("display") != std::string::npos ? 4
+        : entry.name.find("recording") != std::string::npos ? 5 : 0;
+    planner_->record(BatchQueueRequest{entry.name, entry.device, entry.bytes_per_slot,
+        entry.depth, entry.floor, entry.ceiling, 1, entry.extra_bytes, share_index,
+        entry.adjustable}, entry.depth, entry.total_bytes);
+  }
+  try {
+    static_cast<void>(planner_->finish());
+  } catch (const std::exception &error) {
+    throw_queue_plan_error(error.what());
   }
   logger()->info(
       "[GraphBuilder] Queue plan frame_bytes={} depths=[{}] VRAM planned={} total={} free={} "
@@ -562,7 +563,7 @@ bool GraphBuilder::Impl::build_raw_view(const TDesc &H) {
 
   auto H_disp = memcpy(H, {Host});
   auto H_view =
-      planned_batch_queue("raw display", H_disp, s_.queue_sizing_auto ? 8 : s_.cpu_out_size,
+      planned_batch_queue("raw display", H_disp, 8,
                           s_.queue_sizing_auto ? 4 : 1, 1, 1);
 
   if (s_.raw_view) {
@@ -585,7 +586,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_preprocessing(TDesc H) {
 
   if (H.mem_loc != MemLoc::Device) {
     H = memcpy(H, {Device});
-    H = planned_batch_queue("GPU input", H, s_.queue_sizing_auto ? 64 : s_.gpu_in_size,
+    H = planned_batch_queue("GPU input", H, 64,
                             s_.queue_sizing_auto ? 16 : 1, s_.time_window, s_.time_stride);
   }
 
@@ -811,7 +812,7 @@ void GraphBuilder::Impl::build_shack_hartmann_view(const TDesc                 &
   display      = reshape(display, {{1, height, width}});
   display      = convert(display, {Target::U8, Strat::Scaled});
   display      = planned_batch_queue("Shack-Hartmann display", display,
-                                     s_.queue_sizing_auto ? 8 : s_.cpu_out_size,
+                                     8,
                                      s_.queue_sizing_auto ? 4 : 1, 1, 1);
   shack_hartmann_display(display, {});
 }
@@ -831,7 +832,7 @@ void GraphBuilder::Impl::build_shack_hartmann_xcorr_view(const TDesc            
   display = transpose(display, {{0, 1, 3, 2, 4}});
   display = reshape(display, {{1, height, width}});
   display = planned_batch_queue("Shack-Hartmann xcorr display", display,
-                                s_.queue_sizing_auto ? 8 : s_.cpu_out_size,
+                                8,
                                 s_.queue_sizing_auto ? 4 : 1, 1, 1);
   shack_hartmann_xcorr_display(display, {});
 }
@@ -900,7 +901,7 @@ void GraphBuilder::Impl::build_zernike_outputs(const AberrationCorrectionState &
 
   auto coeffs_reshaped = reshape(coeffs, {{1, static_cast<int64_t>(coeffs.shape.at(0))}});
   auto queue           = planned_batch_queue("Zernike coefficients display", coeffs_reshaped,
-                                             s_.queue_sizing_auto ? 8 : s_.cpu_out_size,
+                                             8,
                                              s_.queue_sizing_auto ? 4 : 1, 1, 1);
   coeffs_reshaped      = reshape(queue, {{static_cast<int64_t>(coeffs.shape.at(0))}});
   zernike_coefficients_display(coeffs_reshaped, {s_.autofocus_zernike_orders});
@@ -930,7 +931,7 @@ void GraphBuilder::Impl::build_zernike_outputs(const AberrationCorrectionState &
     display      = wrap2pi(display, {});
     display      = reshape(display, {{1, height, width}});
     display      = planned_batch_queue("Zernike phase display", display,
-                                       s_.queue_sizing_auto ? 8 : s_.cpu_out_size,
+                                       8,
                                        s_.queue_sizing_auto ? 4 : 1, 1, 1);
     zernike_phase_display(display, {});
   }
@@ -1088,7 +1089,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_contrast_input(TDesc
     H = memcpy(H, {Device});
   }
   H = planned_batch_queue("spatial contrast GPU input", H,
-                          s_.queue_sizing_auto ? 64 : s_.gpu_in_size, s_.queue_sizing_auto ? 16 : 1,
+                          64, s_.queue_sizing_auto ? 16 : 1,
                           1, 1);
   return ascontiguousarray(H, {});
 }
@@ -1225,7 +1226,7 @@ void GraphBuilder::Impl::build_xy_output(TDesc result, size_t discard_first,
     auto result_rec = convert_for_output(result);
     result_rec      = memcpy(result_rec, {Host});
     result_rec      = planned_batch_queue("processed recording", result_rec,
-                                          s_.queue_sizing_auto ? 8 : s_.cpu_out_size,
+                                          8,
                                           s_.queue_sizing_auto ? 4 : 1, 1, 1);
 
     auto path  = s_.recording_path.string();
@@ -1244,7 +1245,7 @@ void GraphBuilder::Impl::build_xy_output(TDesc result, size_t discard_first,
 
   auto display_result = convert_for_output(result);
   display_result      = planned_batch_queue("processed display", display_result,
-                                            s_.queue_sizing_auto ? 4 : s_.gpu_out_size,
+                                            4,
                                             s_.queue_sizing_auto ? 2 : 1, 1, 1);
   xy_processed_display(display_result, {});
 }

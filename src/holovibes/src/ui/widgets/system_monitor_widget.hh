@@ -37,6 +37,7 @@ public:
   void set_gpu_throughput(const QString &text);
   void set_ram_usage(const QString &text);
   void set_vram_usage(const QString &text);
+  void set_batch_info(const QString &text);
   void set_dropped_frames(const QString &text);
   void set_pipeline_latency(const QString &text);
 
@@ -59,6 +60,7 @@ private:
   QLabel *vram_usage_value_;
   QLabel *dropped_frames_value_;
   QLabel *pipeline_latency_value_;
+  QLabel *batch_info_value_;
 
   QProgressBar *pipeline_start_bar_;
   QTimer* pipeline_start_timer_;
