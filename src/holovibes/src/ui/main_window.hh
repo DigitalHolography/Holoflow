@@ -68,8 +68,7 @@ private slots:
   void on_raw_record_started_success();
   void on_raw_record_started_failure(const QString &error);
   void on_raw_record_stopped_success();
-  void on_raw_record_stopped_failure(const QString &error);
-
+  void on_raw_record_stopped_failure(const QString &error, std::optional<size_t> id);
 
 private:
   ImportWidget                *import_widget_;
@@ -90,7 +89,8 @@ private:
   void on_update_pipeline_success();
   void on_update_pipeline_failure(const QString &error);
 
-  void on_update_record(size_t id, size_t frame_recorded, size_t writing_speed, size_t elapsed_time);
+  void on_update_record(size_t id, size_t frame_recorded, size_t writing_speed,
+                        size_t elapsed_time);
   void on_update_acquisition(size_t id, size_t frame_acquired);
   void on_raw_record_flushing_finished(size_t id);
 
@@ -132,6 +132,9 @@ private:
   void    save_persistent_state();
   void    restore_persistent_state();
   QString sanitize_recording_token(const QString &value) const;
+  QString find_patient(QString name) const;
+  QString find_date(QString name) const;
+  QString find_eye(QString name) const;
   QString recording_file_name(int acquisition_id) const;
   QString acquisition_label(int acquisition_id) const;
   void    update_acquisition_label();
@@ -160,7 +163,7 @@ private:
   bool               failure_graph_available_         = false;
   double             last_input_fps_                  = 0.0;
   double             signal_plot_time_window_seconds_ = 8.0;
-  QString            session_id_;
+  QString            session_date_;
   int                next_acquisition_id_ = 1;
   std::optional<int> pending_recording_acquisition_id_;
 
@@ -177,6 +180,7 @@ private:
   TensorDisplayWidget  *processed_spectrum_widget_;
   TensorDisplayWidget  *shack_hartmann_widget_;
   TensorDisplayWidget  *shack_hartmann_xcorr_widget_;
+  TensorDisplayWidget  *registration_xcorr_widget_;
   TensorDisplayWidget  *zernike_phase_widget_;
   ZernikeHistoryWidget *zernike_history_widget_;
   // Application columns and central visualization workspace

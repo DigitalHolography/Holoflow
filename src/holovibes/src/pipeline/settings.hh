@@ -23,8 +23,11 @@ namespace holovibes::pipeline {
 enum class ImportSource {
   AMETEK_S710_EURESYS_COAXLINK_OCTO,
   AMETEK_S711_EURESYS_COAXLINK_QSFP,
+  AMETEK_S991_EURESYS_COAXLINK_QSFP,
   HOLOFILE,
 };
+
+const char *to_string(ImportSource src);
 
 enum class LoadMethod {
   READ_LIVE,
@@ -86,7 +89,8 @@ struct Settings {
   SpacialMethod spacial_method;
   float         spacial_lambda;
   float         spacial_z;
-  float         spacial_pixel_size;
+  float         spacial_pixel_size;          // in metters
+  bool          fresnel_use_numpy   = false; ///< Use the graph-composed CUDA NumPy Fresnel path.
   bool          asp_padding_enabled = false;
   int           asp_padded_width    = 1024;
   int           asp_padded_height   = 1024;
@@ -177,7 +181,7 @@ struct Settings {
 
   [[nodiscard]] bool can_use_camera_record() const {
     return recording_format == "holo" && recording_method == RecordingMethod::RAW &&
-           import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP;
+           (import_source != ImportSource::HOLOFILE);
   }
 };
 

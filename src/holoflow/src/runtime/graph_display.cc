@@ -405,16 +405,12 @@ static void write_compiled_edges(std::ostringstream &ss, const runtime::GraphPla
     if (uses_snake_layout(prefs)) {
       for (size_t section_idx = 0; section_idx < sections.size(); ++section_idx) {
         const auto &section = sections[section_idx];
-        const bool  contains_source =
-            g[u].infer.kind == core::TaskKind::Async
-                ? contains_vertex(section.async_cons, u)
-                : contains_vertex(section.const_sync_topo, u) ||
-                      contains_vertex(section.sync_topo, u);
-        const bool contains_target =
-            g[v].infer.kind == core::TaskKind::Async
-                ? contains_vertex(section.async_prod, v)
-                : contains_vertex(section.const_sync_topo, v) ||
-                      contains_vertex(section.sync_topo, v);
+        const bool contains_source = g[u].infer.kind == core::TaskKind::Async
+            ? contains_vertex(section.async_cons, u)
+            : contains_vertex(section.const_sync_topo, u) || contains_vertex(section.sync_topo, u);
+        const bool contains_target = g[v].infer.kind == core::TaskKind::Async
+            ? contains_vertex(section.async_prod, v)
+            : contains_vertex(section.const_sync_topo, v) || contains_vertex(section.sync_topo, v);
         if (contains_source && contains_target) {
           reverse_edge = section_positions[section_idx] % 2 != 0;
           break;

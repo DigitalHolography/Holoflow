@@ -49,7 +49,6 @@
 #include <QSizePolicy>
 #include <QSlider>
 #include <QSpinBox>
-#include <QSplitter>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QStyle>
@@ -69,11 +68,13 @@
 #include <utility>
 
 #include "bug.hh"
+#include "holocam/camera_info.hh"
 #include "holofile/holofile.hh"
 #include "holotask/sinks/ffmpeg_formats.hh"
 #include "logger.hh"
 #include "settings_loader.hh"
 #include "ui/graph_visualizer_widget.hh"
+#include "ui/preferences_dialog.hh"
 #include "ui/update_checker.hh"
 #include "ui/visualization_workspace.hh"
 #include "ui/widgets/selected_widget_settings_panel.hh"
@@ -81,6 +82,12 @@
 #include "ui/widgets/zernike_history_widget.hh"
 
 namespace {
+
+static const std::map<std::string, std::string> camera_type_to_config_key{
+    {"Ametek S710 Euresys Coaxlink Octo", "s710"},
+    {"Ametek S711 Euresys Coaxlink QSFP+", "s711"},
+    {"Ametek S991 Euresys Coaxlink QSFP+", "s991"},
+};
 
 constexpr int  kLargeSpinMax             = 1024 * 1024;
 constexpr int  kTopBarHeight             = 30;
@@ -401,416 +408,13 @@ private:
   bool            result_valid_       = false;
 };
 
-class PreferencesDialog : public QDialog {
-public:
-  using GraphSpecDumpPreferences     = holoflow::core::GraphSpecDumpPreferences;
-  using GraphCompiledDumpPreferences = holoflow::runtime::GraphCompiledDumpPreferences;
-
-  PreferencesDialog(QWidget *parent, holovibes::pipeline::Manager &manager,
-                    std::function<void()> on_apply)
-      : QDialog(parent), manager_(manager), on_apply_(std::move(on_apply)) {
-    setWindowTitle(tr("Preferences"));
-    setMinimumWidth(400);
-
-    auto *dialog_layout = new QVBoxLayout(this);
-
-    auto *import_group_box        = new QGroupBox(tr("Import"), this);
-    auto *import_form             = new QFormLayout();
-    keep_current_config_checkbox_ = new QCheckBox(tr("Always keep current config"), this);
-    keep_current_config_checkbox_->setChecked(
-        QSettings().value(kKeepCurrentConfigKey, false).toBool());
-    keep_current_config_checkbox_->setToolTip(
-        tr("Keep the current processing settings, including Time Window and Time Stride, when "
-           "opening a new .holo file. When off, load settings saved in the file if available."));
-    import_form->addRow(keep_current_config_checkbox_);
-    import_group_box->setLayout(import_form);
-    dialog_layout->addWidget(import_group_box);
-
-    auto *recording_group_box = new QGroupBox(tr("Recording"), this);
-    auto *recording_form = new QFormLayout();
-    auto_processed_record_count_checkbox_ = new QCheckBox(
-        tr("Set processed frame count from import range and Time Stride"), this);
-    auto_processed_record_count_checkbox_->setChecked(
-        QSettings().value(kAutoProcessedRecordCountKey, true).toBool());
-    auto_processed_record_count_checkbox_->setToolTip(
-        tr("For processed recording from a .holo file, set Nb. of frames to "
-           "(End index - Start index) / Time Stride."));
-    recording_form->addRow(auto_processed_record_count_checkbox_);
-    recording_group_box->setLayout(recording_form);
-    dialog_layout->addWidget(recording_group_box);
-
-    auto *splitter = new QSplitter(Qt::Horizontal, this);
-
-    // Dump preferences
-    auto *graph_spec_dump_group_box =
-        setup_graph_spec_dump_preferences(manager_.get_graph_spec_dump_preferences());
-    splitter->addWidget(graph_spec_dump_group_box);
-
-    auto *graph_compiled_dump_group_box =
-        setup_graph_compiled_dump_preferences(manager_.get_graph_compiled_dump_preferences());
-    splitter->addWidget(graph_compiled_dump_group_box);
-
-    auto *runtime_failure_group_box = new QGroupBox(tr("Failure Diagnostics"), this);
-    auto *runtime_failure_form      = new QFormLayout();
-    runtime_failure_graph_checkbox_ = new QCheckBox(this);
-    runtime_failure_graph_checkbox_->setChecked(manager_.dump_runtime_failure_graphs());
-    runtime_failure_graph_checkbox_->setToolTip(
-        tr("Save graph_build_failure.dot when a task rejects an input while the pipeline is being "
-           "built, compilation_failure.dot for compiler errors, and runtime_failure.dot for "
-           "runtime errors and Windows exceptions."));
-    runtime_failure_form->addRow(tr("Dump graph on failure"), runtime_failure_graph_checkbox_);
-    runtime_failure_group_box->setLayout(runtime_failure_form);
-    splitter->addWidget(runtime_failure_group_box);
-
-    dialog_layout->addWidget(splitter);
-
-    // Apply / Close
-    auto *button_box = new QDialogButtonBox(QDialogButtonBox::Close, this);
-    apply_button_    = button_box->addButton(tr("Apply"), QDialogButtonBox::ActionRole);
-    apply_button_->setDisabled(true);
-    dialog_layout->addWidget(button_box);
-
-    connect(apply_button_, &QPushButton::clicked, this, [this]() { update_preferences(); });
-    connect(button_box, &QDialogButtonBox::rejected, this, &QDialog::reject);
-    connect_signals();
-  }
-
-private:
-  QGroupBox *
-  setup_graph_spec_dump_preferences(const GraphSpecDumpPreferences &graph_spec_dump_preferences) {
-    auto *group_box  = new QGroupBox(tr("Graph Dump Spec"), this);
-    auto *input_form = new QFormLayout();
-    input_form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
-
-    graph_spec_dump_preferences_widgets_.rankdir_combo_ =
-        create_combo_box(this, QStringList{"LR", "TB"});
-    if (graph_spec_dump_preferences.rankdir == GraphSpecDumpPreferences::Rankdir::TopToBottom) {
-      graph_spec_dump_preferences_widgets_.rankdir_combo_->setCurrentText("TB");
-    }
-
-    input_form->addRow(tr("Graph rankdir"), graph_spec_dump_preferences_widgets_.rankdir_combo_);
-
-    graph_spec_dump_preferences_widgets_.floating_point_precision_spin_ =
-        create_spin_box(this, 0, 17, graph_spec_dump_preferences.floating_point_precision);
-    graph_spec_dump_preferences_widgets_.floating_point_precision_spin_->setToolTip(
-        tr("Number of digits after the decimal point in scientific notation."));
-    input_form->addRow(tr("Floating-point precision"),
-                       graph_spec_dump_preferences_widgets_.floating_point_precision_spin_);
-
-    graph_spec_dump_preferences_widgets_.node_name_checkbox_ = new QCheckBox(this);
-    graph_spec_dump_preferences_widgets_.node_name_checkbox_->setChecked(
-        graph_spec_dump_preferences.dump_node_name);
-    graph_spec_dump_preferences_widgets_.node_name_checkbox_->setToolTip(
-        tr("Include node names in the graph dump."));
-    input_form->addRow(tr("Node names"), graph_spec_dump_preferences_widgets_.node_name_checkbox_);
-
-    graph_spec_dump_preferences_widgets_.node_kind_checkbox_ = new QCheckBox(this);
-    graph_spec_dump_preferences_widgets_.node_kind_checkbox_->setChecked(
-        graph_spec_dump_preferences.dump_node_kind);
-    graph_spec_dump_preferences_widgets_.node_kind_checkbox_->setToolTip(
-        tr("Include node kinds in the graph dump."));
-    input_form->addRow(tr("Node kinds"), graph_spec_dump_preferences_widgets_.node_kind_checkbox_);
-
-    graph_spec_dump_preferences_widgets_.node_settings_checkbox_ = new QCheckBox(this);
-    graph_spec_dump_preferences_widgets_.node_settings_checkbox_->setChecked(
-        graph_spec_dump_preferences.dump_node_settings);
-    graph_spec_dump_preferences_widgets_.node_settings_checkbox_->setToolTip(
-        tr("Include node settings in the graph dump."));
-    input_form->addRow(tr("Node settings"),
-                       graph_spec_dump_preferences_widgets_.node_settings_checkbox_);
-
-    graph_spec_dump_preferences_widgets_.edge_indices_checkbox_ = new QCheckBox(this);
-    graph_spec_dump_preferences_widgets_.edge_indices_checkbox_->setChecked(
-        graph_spec_dump_preferences.dump_edge_indices);
-    graph_spec_dump_preferences_widgets_.edge_indices_checkbox_->setToolTip(
-        tr("Include edge indices in the graph dump."));
-    input_form->addRow(tr("Edge indices"),
-                       graph_spec_dump_preferences_widgets_.edge_indices_checkbox_);
-
-    group_box->setLayout(input_form);
-    return group_box;
-  }
-
-  // TODO add compiled graph preferences args
-  QGroupBox *setup_graph_compiled_dump_preferences(
-      const GraphCompiledDumpPreferences &graph_compiled_dump_preferences) {
-    auto *group_box  = new QGroupBox(tr("Graph Compiled Spec"), this);
-    auto *input_form = new QFormLayout();
-    input_form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
-
-    graph_compiled_dump_preferences_widgets_.rankdir_combo_ =
-        create_combo_box(this, QStringList{"LR", "TB"});
-    if (graph_compiled_dump_preferences.rankdir ==
-        GraphCompiledDumpPreferences::Rankdir::TopToBottom) {
-      graph_compiled_dump_preferences_widgets_.rankdir_combo_->setCurrentText("TB");
-    }
-
-    graph_compiled_dump_preferences_widgets_.rankdir_combo_->setToolTip(
-        tr("Direction used by the normal compiled-graph layout."));
-    input_form->addRow(tr("Rank direction"),
-                       graph_compiled_dump_preferences_widgets_.rankdir_combo_);
-
-    graph_compiled_dump_preferences_widgets_.layout_combo_ =
-        create_combo_box(this, QStringList{tr("Normal"), tr("Stairs"), tr("Block"), tr("Snake")});
-    graph_compiled_dump_preferences_widgets_.layout_combo_->setCurrentIndex(
-        static_cast<int>(graph_compiled_dump_preferences.layout));
-    graph_compiled_dump_preferences_widgets_.layout_combo_->setToolTip(
-        tr("Arrange sections normally, as horizontal stairs, as a left-aligned block, or in "
-           "alternating snake rows."));
-    graph_compiled_dump_preferences_widgets_.rankdir_combo_->setEnabled(
-        graph_compiled_dump_preferences.layout == GraphCompiledDumpPreferences::Layout::Normal);
-    input_form->addRow(tr("Section layout"),
-                       graph_compiled_dump_preferences_widgets_.layout_combo_);
-
-    graph_compiled_dump_preferences_widgets_.floating_point_precision_spin_ =
-        create_spin_box(this, 0, 17, graph_compiled_dump_preferences.floating_point_precision);
-    graph_compiled_dump_preferences_widgets_.floating_point_precision_spin_->setToolTip(
-        tr("Number of digits after the decimal point in scientific notation."));
-    input_form->addRow(tr("Floating-point precision"),
-                       graph_compiled_dump_preferences_widgets_.floating_point_precision_spin_);
-
-    graph_compiled_dump_preferences_widgets_.node_name_checkbox_ = new QCheckBox(this);
-    graph_compiled_dump_preferences_widgets_.node_name_checkbox_->setChecked(
-        graph_compiled_dump_preferences.dump_node_name);
-    graph_compiled_dump_preferences_widgets_.node_name_checkbox_->setToolTip(
-        tr("Include node names in the compiled graph."));
-    input_form->addRow(tr("Node names"),
-                       graph_compiled_dump_preferences_widgets_.node_name_checkbox_);
-
-    graph_compiled_dump_preferences_widgets_.node_kind_checkbox_ = new QCheckBox(this);
-    graph_compiled_dump_preferences_widgets_.node_kind_checkbox_->setChecked(
-        graph_compiled_dump_preferences.dump_node_kind);
-    graph_compiled_dump_preferences_widgets_.node_kind_checkbox_->setToolTip(
-        tr("Include node kinds in the compiled graph."));
-    input_form->addRow(tr("Node kinds"),
-                       graph_compiled_dump_preferences_widgets_.node_kind_checkbox_);
-
-    graph_compiled_dump_preferences_widgets_.node_settings_checkbox_ = new QCheckBox(this);
-    graph_compiled_dump_preferences_widgets_.node_settings_checkbox_->setChecked(
-        graph_compiled_dump_preferences.dump_node_settings);
-    graph_compiled_dump_preferences_widgets_.node_settings_checkbox_->setToolTip(
-        tr("Include node settings in the compiled graph."));
-    input_form->addRow(tr("Node settings"),
-                       graph_compiled_dump_preferences_widgets_.node_settings_checkbox_);
-
-    graph_compiled_dump_preferences_widgets_.node_in_out_tids_ = new QCheckBox(this);
-    graph_compiled_dump_preferences_widgets_.node_in_out_tids_->setChecked(
-        graph_compiled_dump_preferences.dump_node_in_out_tids);
-    graph_compiled_dump_preferences_widgets_.node_in_out_tids_->setToolTip(
-        tr("Include node input and output TIDs in the compiled graph."));
-    input_form->addRow(tr("Node I/O TIDs"),
-                       graph_compiled_dump_preferences_widgets_.node_in_out_tids_);
-
-    graph_compiled_dump_preferences_widgets_.edge_indices_checkbox_ = new QCheckBox(this);
-    graph_compiled_dump_preferences_widgets_.edge_indices_checkbox_->setChecked(
-        graph_compiled_dump_preferences.dump_edge_indices);
-    graph_compiled_dump_preferences_widgets_.edge_indices_checkbox_->setToolTip(
-        tr("Include edge indices in the compiled graph."));
-    input_form->addRow(tr("Edge indices"),
-                       graph_compiled_dump_preferences_widgets_.edge_indices_checkbox_);
-
-    graph_compiled_dump_preferences_widgets_.edge_desc_checkbox_ = new QCheckBox(this);
-    graph_compiled_dump_preferences_widgets_.edge_desc_checkbox_->setChecked(
-        graph_compiled_dump_preferences.dump_edge_descriptions);
-    graph_compiled_dump_preferences_widgets_.edge_desc_checkbox_->setToolTip(
-        tr("Include edge descriptions in the compiled graph."));
-    input_form->addRow(tr("Edge descriptions"),
-                       graph_compiled_dump_preferences_widgets_.edge_desc_checkbox_);
-
-    graph_compiled_dump_preferences_widgets_.section_toggle_checkbox_ = new QCheckBox(this);
-    graph_compiled_dump_preferences_widgets_.section_toggle_checkbox_->setChecked(
-        graph_compiled_dump_preferences.dump_section_info);
-    graph_compiled_dump_preferences_widgets_.section_toggle_checkbox_->setToolTip(
-        tr("Include section information in the compiled graph."));
-    input_form->addRow(tr("Section info"),
-                       graph_compiled_dump_preferences_widgets_.section_toggle_checkbox_);
-
-    graph_compiled_dump_preferences_widgets_.section_stream_addr_checkbox_ = new QCheckBox(this);
-    graph_compiled_dump_preferences_widgets_.section_stream_addr_checkbox_->setChecked(
-        graph_compiled_dump_preferences.dump_section_stream_addr);
-    graph_compiled_dump_preferences_widgets_.section_stream_addr_checkbox_->setToolTip(
-        tr("Include section stream addresses in the compiled graph."));
-    input_form->addRow(tr("Section stream addresses"),
-                       graph_compiled_dump_preferences_widgets_.section_stream_addr_checkbox_);
-
-    graph_compiled_dump_preferences_widgets_.resources_toggle_checkbox_ = new QCheckBox(this);
-    graph_compiled_dump_preferences_widgets_.resources_toggle_checkbox_->setChecked(
-        graph_compiled_dump_preferences.dump_resource_info);
-    graph_compiled_dump_preferences_widgets_.resources_toggle_checkbox_->setToolTip(
-        tr("Include resource information in the compiled graph."));
-    input_form->addRow(tr("Resource info"),
-                       graph_compiled_dump_preferences_widgets_.resources_toggle_checkbox_);
-
-    group_box->setLayout(input_form);
-    return group_box;
-  }
-
-  void update_preferences() {
-    // const auto &specs_ = nullptr;
-    // holoflow::core::to_dot(specs_);
-    apply_button_->setEnabled(false);
-    auto graph_spec_dump_preferences = GraphSpecDumpPreferences{
-        .rankdir = graph_spec_dump_preferences_widgets_.rankdir_combo_->currentText() == "LR"
-                       ? GraphSpecDumpPreferences::Rankdir::LeftToRight
-                       : GraphSpecDumpPreferences::Rankdir::TopToBottom,
-
-        .floating_point_precision =
-            graph_spec_dump_preferences_widgets_.floating_point_precision_spin_->value(),
-
-        .dump_node_name = graph_spec_dump_preferences_widgets_.node_name_checkbox_->isChecked(),
-        .dump_node_kind = graph_spec_dump_preferences_widgets_.node_kind_checkbox_->isChecked(),
-        .dump_node_settings =
-            graph_spec_dump_preferences_widgets_.node_settings_checkbox_->isChecked(),
-        .dump_edge_indices =
-            graph_spec_dump_preferences_widgets_.edge_indices_checkbox_->isChecked()};
-
-    auto graph_compiled_dump_preferences = GraphCompiledDumpPreferences{
-        .rankdir = graph_compiled_dump_preferences_widgets_.rankdir_combo_->currentText() == "LR"
-                       ? GraphCompiledDumpPreferences::Rankdir::LeftToRight
-                       : GraphCompiledDumpPreferences::Rankdir::TopToBottom,
-        .layout  = static_cast<GraphCompiledDumpPreferences::Layout>(
-            graph_compiled_dump_preferences_widgets_.layout_combo_->currentIndex()),
-
-        .floating_point_precision =
-            graph_compiled_dump_preferences_widgets_.floating_point_precision_spin_->value(),
-
-        .dump_node_name = graph_compiled_dump_preferences_widgets_.node_name_checkbox_->isChecked(),
-        .dump_node_kind = graph_compiled_dump_preferences_widgets_.node_kind_checkbox_->isChecked(),
-        .dump_node_settings =
-            graph_compiled_dump_preferences_widgets_.node_settings_checkbox_->isChecked(),
-        .dump_node_in_out_tids =
-            graph_compiled_dump_preferences_widgets_.node_in_out_tids_->isChecked(),
-        .dump_edge_indices =
-            graph_compiled_dump_preferences_widgets_.edge_indices_checkbox_->isChecked(),
-        .dump_edge_descriptions =
-            graph_compiled_dump_preferences_widgets_.edge_desc_checkbox_->isChecked(),
-        .dump_section_info =
-            graph_compiled_dump_preferences_widgets_.section_toggle_checkbox_->isChecked(),
-        .dump_section_stream_addr =
-            graph_compiled_dump_preferences_widgets_.section_stream_addr_checkbox_->isChecked(),
-        .dump_resource_info =
-            graph_compiled_dump_preferences_widgets_.resources_toggle_checkbox_->isChecked()};
-
-    manager_.update_graph_spec_dump_preferences(graph_spec_dump_preferences);
-    manager_.update_graph_compiled_dump_preferences(graph_compiled_dump_preferences);
-    manager_.set_dump_runtime_failure_graphs(runtime_failure_graph_checkbox_->isChecked());
-    QSettings settings;
-    const bool auto_count_changed =
-        settings.value(kAutoProcessedRecordCountKey, true).toBool() !=
-        auto_processed_record_count_checkbox_->isChecked();
-    settings.setValue(kKeepCurrentConfigKey, keep_current_config_checkbox_->isChecked());
-    settings.setValue(kAutoProcessedRecordCountKey,
-                      auto_processed_record_count_checkbox_->isChecked());
-    settings.sync();
-    if (auto_count_changed) on_apply_();
-  }
-
-  void connect_signals() {
-    connect(graph_spec_dump_preferences_widgets_.rankdir_combo_,
-            qOverload<int>(&QComboBox::currentIndexChanged), this,
-            [this](int) { apply_button_->setEnabled(true); });
-    connect(graph_spec_dump_preferences_widgets_.floating_point_precision_spin_,
-            qOverload<int>(&QSpinBox::valueChanged), this,
-            [this](int) { apply_button_->setEnabled(true); });
-    connect(graph_spec_dump_preferences_widgets_.node_name_checkbox_, &QCheckBox::toggled, this,
-            [this](bool) { apply_button_->setEnabled(true); });
-    connect(graph_spec_dump_preferences_widgets_.node_kind_checkbox_, &QCheckBox::toggled, this,
-            [this](bool) { apply_button_->setEnabled(true); });
-    connect(graph_spec_dump_preferences_widgets_.node_settings_checkbox_, &QCheckBox::toggled, this,
-            [this](bool) { apply_button_->setEnabled(true); });
-    connect(graph_spec_dump_preferences_widgets_.edge_indices_checkbox_, &QCheckBox::toggled, this,
-            [this](bool) { apply_button_->setEnabled(true); });
-
-    connect(graph_compiled_dump_preferences_widgets_.rankdir_combo_,
-            qOverload<int>(&QComboBox::currentIndexChanged), this,
-            [this](int) { apply_button_->setEnabled(true); });
-    connect(graph_compiled_dump_preferences_widgets_.layout_combo_,
-            qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index) {
-              graph_compiled_dump_preferences_widgets_.rankdir_combo_->setEnabled(
-                  index == static_cast<int>(GraphCompiledDumpPreferences::Layout::Normal));
-              apply_button_->setEnabled(true);
-            });
-    connect(graph_compiled_dump_preferences_widgets_.floating_point_precision_spin_,
-            qOverload<int>(&QSpinBox::valueChanged), this,
-            [this](int) { apply_button_->setEnabled(true); });
-    connect(graph_compiled_dump_preferences_widgets_.node_name_checkbox_, &QCheckBox::toggled, this,
-            [this](bool) { apply_button_->setEnabled(true); });
-    connect(graph_compiled_dump_preferences_widgets_.node_kind_checkbox_, &QCheckBox::toggled, this,
-            [this](bool) { apply_button_->setEnabled(true); });
-    connect(graph_compiled_dump_preferences_widgets_.node_settings_checkbox_, &QCheckBox::toggled,
-            this, [this](bool) { apply_button_->setEnabled(true); });
-    connect(graph_compiled_dump_preferences_widgets_.node_in_out_tids_, &QCheckBox::toggled, this,
-            [this](bool) { apply_button_->setEnabled(true); });
-    connect(graph_compiled_dump_preferences_widgets_.edge_indices_checkbox_, &QCheckBox::toggled,
-            this, [this](bool) { apply_button_->setEnabled(true); });
-    connect(graph_compiled_dump_preferences_widgets_.edge_desc_checkbox_, &QCheckBox::toggled, this,
-            [this](bool) { apply_button_->setEnabled(true); });
-    connect(graph_compiled_dump_preferences_widgets_.section_toggle_checkbox_, &QCheckBox::toggled,
-            this, [this](bool) { apply_button_->setEnabled(true); });
-    connect(graph_compiled_dump_preferences_widgets_.section_stream_addr_checkbox_,
-            &QCheckBox::toggled, this, [this](bool) { apply_button_->setEnabled(true); });
-    connect(graph_compiled_dump_preferences_widgets_.resources_toggle_checkbox_,
-            &QCheckBox::toggled, this, [this](bool) { apply_button_->setEnabled(true); });
-    connect(runtime_failure_graph_checkbox_, &QCheckBox::toggled, this,
-            [this](bool) { apply_button_->setEnabled(true); });
-    connect(keep_current_config_checkbox_, &QCheckBox::toggled, this,
-            [this](bool) { apply_button_->setEnabled(true); });
-    connect(auto_processed_record_count_checkbox_, &QCheckBox::toggled, this,
-            [this](bool) { apply_button_->setEnabled(true); });
-  }
-
-  holovibes::pipeline::Manager &manager_;
-  std::function<void()> on_apply_;
-
-  QPushButton *apply_button_ = nullptr;
-
-  struct GraphSpecDumpPreferencesWidgets {
-    // dump preferences
-    // rankdir: LR | TB
-    QComboBox *rankdir_combo_                 = nullptr;
-    QSpinBox  *floating_point_precision_spin_ = nullptr;
-    // Nodes
-    QCheckBox *node_name_checkbox_     = nullptr;
-    QCheckBox *node_kind_checkbox_     = nullptr;
-    QCheckBox *node_settings_checkbox_ = nullptr;
-    // Edges
-    QCheckBox *edge_indices_checkbox_ = nullptr;
-  };
-  GraphSpecDumpPreferencesWidgets graph_spec_dump_preferences_widgets_;
-
-  struct GraphCompiledDumpPreferencesWidgets {
-    // dump preferences
-    // rankdir: LR | TB
-    QComboBox *rankdir_combo_                 = nullptr;
-    QComboBox *layout_combo_                  = nullptr;
-    QSpinBox  *floating_point_precision_spin_ = nullptr;
-    QCheckBox *node_name_checkbox_            = nullptr;
-    QCheckBox *node_kind_checkbox_            = nullptr;
-    QCheckBox *node_settings_checkbox_        = nullptr;
-    QCheckBox *node_in_out_tids_              = nullptr;
-    // Edges
-    QCheckBox *edge_indices_checkbox_ = nullptr;
-    QCheckBox *edge_desc_checkbox_    = nullptr;
-
-    // Section
-    QCheckBox *section_toggle_checkbox_      = nullptr;
-    QCheckBox *section_stream_addr_checkbox_ = nullptr;
-
-    // Resources
-    QCheckBox *resources_toggle_checkbox_ = nullptr;
-  };
-  GraphCompiledDumpPreferencesWidgets graph_compiled_dump_preferences_widgets_;
-  QCheckBox                          *runtime_failure_graph_checkbox_ = nullptr;
-  QCheckBox                          *keep_current_config_checkbox_   = nullptr;
-  QCheckBox                          *auto_processed_record_count_checkbox_ = nullptr;
-};
 
 } // namespace
 
 namespace holovibes::ui {
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent), session_id_(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss")) {
+    : QMainWindow(parent), session_date_(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss")) {
   setup_main_layout();
   initialize_display_widgets();
   restore_persistent_state();
@@ -869,7 +473,7 @@ void MainWindow::setup_main_layout() {
       "specified.");
 
   auto *session_label  = new QLabel("Session", session_bar);
-  session_value_label_ = new QLabel(session_id_, session_bar);
+  session_value_label_ = new QLabel(session_date_, session_bar);
   session_value_label_->setObjectName("sessionValue");
 
   auto *next_acquisition_label = new QLabel("Next Acquisition", session_bar);
@@ -1062,6 +666,7 @@ void MainWindow::refresh_visualization_availability() {
       autofocus->is_z5_enabled() || autofocus->is_z6_enabled() || autofocus->is_z7_enabled() ||
       autofocus->is_z8_enabled() || autofocus->is_z9_enabled() || autofocus->is_z10_enabled();
   const bool single_reference_slopes = !autofocus->use_graph_laplacian();
+  const bool registration_enabled    = view_widget_->is_registration_enabled();
 
   const auto autofocus_message = tr("Enable Auto Focus to generate this visualization.");
   const auto zernike_order_message =
@@ -1083,6 +688,10 @@ void MainWindow::refresh_visualization_availability() {
       {"shack_hartmann_xcorr",
        {autofocus_enabled && single_reference_slopes,
         autofocus_enabled ? xcorr_message : autofocus_message}},
+      {"registration_xcorr",
+       {registration_enabled, registration_enabled
+                                  ? QString{}
+                                  : tr("Enable Registration to generate this visualization.")}},
       {"xy_raw", {true, {}}},
       {"raw_spectrum", {false, spectrum_message}},
       {"processed_spectrum", {false, spectrum_message}},
@@ -1130,18 +739,36 @@ QString MainWindow::sanitize_recording_token(const QString &value) const {
   return token;
 }
 
+QString MainWindow::find_patient(QString name) const {
+  return name.replace("{patient}", sanitize_recording_token(patient_line_edit_->text()),
+                      Qt::CaseInsensitive);
+}
+
+QString MainWindow::find_date(QString name) const {
+  return name.replace("{date}", session_date_, Qt::CaseInsensitive);
+}
+
+QString MainWindow::find_eye(QString name) const {
+  return name.replace("{eye}", sanitize_recording_token(eye_side_combo_->currentText()),
+                      Qt::CaseInsensitive);
+}
+
 QString MainWindow::recording_file_name(int acquisition_id) const {
-  const QString patient = sanitize_recording_token(patient_line_edit_->text());
-  const QString eye     = sanitize_recording_token(eye_side_combo_->currentText());
-  const QString format =
-      export_widget_ == nullptr ? QStringLiteral("holo") : export_widget_->get_format();
+  QString name = export_widget_->get_file_name_template();
+  name = find_patient(name);
+  name = find_date(name);
+  name = find_eye(name);
+  name = QFileInfo(name).fileName();
+  if (name.isEmpty()) {
+    name = "recording";
+  }
+  const QString format = export_widget_->get_format();
   const auto   *format_info = holotask::sinks::ffmpeg_format(format.toStdString());
   const QString extension =
       format_info == nullptr
           ? QStringLiteral("holo")
           : QString::fromUtf8(format_info->extension.data(), format_info->extension.size());
-  return QString("%1_%2_%3_%4.%5")
-      .arg(patient, eye, session_id_, acquisition_label(acquisition_id), extension);
+  return QString("%1_%2.%3").arg(name, acquisition_label(acquisition_id), extension);
 }
 
 QString MainWindow::acquisition_label(int acquisition_id) const {
@@ -1188,20 +815,9 @@ void MainWindow::configure_unsupported_features() {
     return;
   }
 
-  const QString registration_tooltip =
-      tr("Visible for planned support. The current pipeline does not support registration yet.");
   const QString convolution_tooltip =
       tr("Visible for planned support. The current pipeline does not support convolution kernels "
          "yet.");
-
-  {
-    QSignalBlocker blocker(view_widget_->registration_check());
-    view_widget_->set_registration_enabled(false);
-  }
-  view_widget_->registration_check()->setEnabled(false);
-  view_widget_->registration_check()->setToolTip(registration_tooltip);
-  view_widget_->registration_radius()->setEnabled(false);
-  view_widget_->registration_radius()->setToolTip(registration_tooltip);
 
   {
     QSignalBlocker blocker(render_widget_->convolution_combo());
@@ -1353,6 +969,7 @@ void MainWindow::save_persistent_state() {
   settings.setValue("range_end", view_widget_->get_range_end());
   settings.setValue("registration", view_widget_->is_registration_enabled());
   settings.setValue("registration_radius", view_widget_->get_registration_radius());
+  settings.setValue("registration_ellipse", view_widget_->is_registration_ellipse_enabled());
   settings.setValue("reticle", view_widget_->is_reticle_enabled());
   settings.setValue("reticle_radius", view_widget_->get_reticle_radius());
   settings.setValue("xy_processed_flip_x", xy_processed_widget_->flip_x_enabled());
@@ -1368,6 +985,7 @@ void MainWindow::save_persistent_state() {
   settings.setValue("codec", export_widget_->get_codec());
   settings.setValue("resize_algorithm", export_widget_->get_resize_algorithm());
   settings.setValue("file_path", export_widget_->get_file_path());
+  settings.setValue("file_name_template", export_widget_->get_file_name_template());
   settings.setValue("tag", export_widget_->get_tag());
   settings.setValue("frame_count_enabled", export_widget_->is_frame_count_enabled());
   settings.setValue("frame_count", export_widget_->get_frame_count());
@@ -1544,6 +1162,8 @@ void MainWindow::restore_persistent_state() {
       settings.value("registration", view_widget_->is_registration_enabled()).toBool());
   view_widget_->registration_radius()->setValue(
       settings.value("registration_radius", view_widget_->get_registration_radius()).toDouble());
+  view_widget_->set_registration_ellipse_enabled(
+      settings.value("registration_ellipse", false).toBool());
   view_widget_->reticle_check()->setChecked(
       settings.value("reticle", view_widget_->is_reticle_enabled()).toBool());
   view_widget_->reticle_radius()->setValue(
@@ -1564,12 +1184,17 @@ void MainWindow::restore_persistent_state() {
   restore_combo_text(settings, "resize_algorithm", export_widget_->resize_algorithm_combo());
   export_widget_->set_file_path(
       settings.value("file_path", export_widget_->get_file_path()).toString());
+  export_widget_->set_file_name_template(
+      settings.value("file_name_template", export_widget_->get_file_name_template()).toString());
   restore_combo_text(settings, "tag", export_widget_->tag_combo());
   export_widget_->frames_check()->setChecked(
       settings.value("frame_count_enabled", export_widget_->is_frame_count_enabled()).toBool());
   export_widget_->set_frame_count(
       settings.value("frame_count", export_widget_->get_frame_count()).toInt());
+
+  export_widget_->set_camera_recording_enabled(import_widget_->is_camera_mode());
   settings.endGroup();
+  record_widget_->reset(export_widget_->get_queue_count());
 
   auto *autofocus = render_widget_->autofocus_widget();
   settings.beginGroup("autofocus");
@@ -1664,6 +1289,7 @@ void MainWindow::initialize_display_widgets() {
   processed_spectrum_widget_   = new TensorDisplayWidget(display_workspace_);
   shack_hartmann_widget_       = new TensorDisplayWidget(display_workspace_);
   shack_hartmann_xcorr_widget_ = new TensorDisplayWidget(display_workspace_);
+  registration_xcorr_widget_   = new TensorDisplayWidget(display_workspace_);
   zernike_phase_widget_        = new TensorDisplayWidget(display_workspace_);
   zernike_history_widget_      = new ZernikeHistoryWidget(display_workspace_);
   graph_visualizer_widget_     = new GraphVisualizerWidget(display_workspace_);
@@ -1685,6 +1311,9 @@ void MainWindow::initialize_display_widgets() {
   display_workspace_->register_visualization({"shack_hartmann_xcorr", "Shack Hartmann XCorr",
                                               shack_hartmann_xcorr_widget_, "shack_hartmann",
                                               DockPlacement::Right, false});
+  display_workspace_->register_visualization({"registration_xcorr", "Registration XCorr",
+                                              registration_xcorr_widget_, "xy_processed",
+                                              DockPlacement::Tab, false});
 
   // Optional current displays use the same registry and visibility model. They default to tabs so
   // enabling one does not disturb the requested five-display hierarchy.
@@ -1740,15 +1369,35 @@ void MainWindow::initialize_display_widgets() {
           });
   xy_processed_widget_->set_value_range(0.0f, 1.0f);
   xy_processed_widget_->set_display_inverted(false);
+  connect(view_widget_->registration_ellipse_check(), &QCheckBox::toggled, this,
+          [this](bool checked) {
+            xy_processed_widget_->set_registration_ellipse_enabled(checked);
+            if (checked) {
+              xy_processed_widget_->set_registration_ellipse_radius(
+                  view_widget_->get_registration_radius());
+            }
+          });
+  connect(view_widget_->registration_radius(), qOverload<double>(&QDoubleSpinBox::valueChanged),
+          this, [this](double value) {
+            if (view_widget_->is_registration_ellipse_enabled()) {
+              xy_processed_widget_->set_registration_ellipse_radius(value);
+            }
+          });
 }
 
 void MainWindow::initialize_pipeline_manager() {
   pipeline_manager_ = new pipeline::Manager(
       render_widget_->autofocus_widget(), xy_processed_widget_, xz_processed_widget_,
       yz_processed_widget_, xy_raw_widget_, raw_spectrum_widget_, processed_spectrum_widget_,
-      shack_hartmann_widget_, shack_hartmann_xcorr_widget_, zernike_phase_widget_,
-      zernike_history_widget_);
+      shack_hartmann_widget_, shack_hartmann_xcorr_widget_, registration_xcorr_widget_,
+      zernike_phase_widget_, zernike_history_widget_);
   pipeline_manager_->set_dump_runtime_failure_graphs(dump_runtime_failure_graphs_);
+  QSettings settings;
+  auto spec_preferences = pipeline_manager_->get_graph_spec_dump_preferences();
+  auto compiled_preferences = pipeline_manager_->get_graph_compiled_dump_preferences();
+  restore_graph_preferences(settings, spec_preferences, compiled_preferences);
+  pipeline_manager_->update_graph_spec_dump_preferences(spec_preferences);
+  pipeline_manager_->update_graph_compiled_dump_preferences(compiled_preferences);
   pipeline_manager_thread_ = new QThread(this);
   pipeline_manager_->moveToThread(pipeline_manager_thread_);
   pipeline_manager_thread_->start();
@@ -1876,6 +1525,8 @@ void MainWindow::connect_import_controls() {
 }
 
 void MainWindow::connect_export_controls() {
+  connect(export_widget_->file_name_template_edit(), &QLineEdit::textChanged, this,
+          &MainWindow::update_recording_path_preview);
 
   connect(export_widget_->format_combo(), qOverload<int>(&QComboBox::currentIndexChanged), this,
           [this](int) { update_recording_path_preview(); });
@@ -2000,11 +1651,10 @@ void MainWindow::show_fft_frequency_tool() {
 }
 
 void MainWindow::show_preferences() {
-  PreferencesDialog dialog(this, *pipeline_manager_, [this]() {
+  show_preferences_dialog(this, *pipeline_manager_, [this]() {
     update_processed_recording_frame_count();
     update_if_running();
   });
-  dialog.exec();
 }
 
 void MainWindow::update_processed_recording_frame_count() {
@@ -2359,7 +2009,7 @@ void MainWindow::on_import_start_clicked() {
     import_widget_->set_start_enabled(false);
     import_widget_->set_stop_enabled(false);
     refresh_command_bar();
-    auto pause = [manager = pipeline_manager_]() { manager->stop_pipeline(); };
+    auto pause = [manager = pipeline_manager_]() { manager->pause_pipeline(); };
     HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, pause, Qt::QueuedConnection));
     return;
   }
@@ -2502,11 +2152,20 @@ void MainWindow::on_raw_record_stopped_success() {
   refresh_command_bar();
 }
 
-void MainWindow::on_raw_record_stopped_failure(const QString &error) {
-  logger()->error("[MainWindow::on_raw_record_stopped_failure]");
+void MainWindow::on_raw_record_stopped_failure(const QString &error, std::optional<size_t> id) {
+  if (id.has_value()) {
+    record_widget_->free(*id, true);
+    logger()->error("[MainWindow::on_raw_record_stopped_failure] record {} failed to stop: {}", *id,
+                    error.toStdString());
+  } else {
+    logger()->error("[MainWindow::on_raw_record_stopped_failure] record failed to stop: {}",
+                    error.toStdString());
+  }
+
   export_in_progress_ = false;
   export_widget_->set_stop_enabled(pipeline_running_);
   export_widget_->set_record_enabled(pipeline_running_ && export_widget_->isChecked());
+
   refresh_command_bar();
   show_pipeline_error_popup(tr("An error occurred while stopping raw recording:\n%1").arg(error));
 }
@@ -2525,6 +2184,13 @@ bool MainWindow::validate_inputs() {
   view_widget_->clear_validation_styles();
   render_widget_->autofocus_widget()->clear_validation_styles();
   configure_unsupported_features();
+
+  if (!import_widget_->is_source_valid()) {
+    auto fp = import_widget_->get_file_path();
+    logger()->error("[MainWindow::validate_inputs] source path is not valid: {}", fp.toStdString());
+    show_pipeline_error_popup(tr("Invalid source file path:\n%1").arg(fp));
+    return false;
+  }
 
   pipeline::Settings settings = get_pipeline_settings();
   export_widget_->set_frame_batch_size(settings.recording_method == pipeline::RecordingMethod::RAW
@@ -2731,7 +2397,10 @@ MainWindow::build_validation_context(const pipeline::Settings &settings) const {
       try {
         std::ifstream cfg_file(settings.camera_config_path);
         auto          cfg_json = nlohmann::json::parse(cfg_file);
-        const auto   &cfg = cfg_json.contains("s711") ? cfg_json.at("s711") : cfg_json.at("s710");
+
+        auto        type = import_widget_->get_camera_type();
+        auto        key  = camera_type_to_config_key.at(type.toStdString());
+        const auto &cfg  = cfg_json.contains(key) ? cfg_json.at(key) : nlohmann::json();
 
         context.source_width        = cfg.at("Width").get<int>();
         context.source_height       = cfg.at("Height").get<int>();
@@ -2787,6 +2456,7 @@ void MainWindow::setup_update_connections() {
   auto cb = [this]() {
     update_if_running();
     monitor_widget_->reset_pipeline_progress_bar();
+    export_widget_->set_camera_recording_enabled(import_widget_->is_camera_mode());
   };
 
   connect(import_widget_, &ImportWidget::settings_changed, this, cb);
@@ -2881,9 +2551,11 @@ QSize MainWindow::guess_source_dims() {
       throw std::runtime_error(std::format("Could not open camera config file: {}", path));
     }
 
-    // FIXME: This needs to be properly handeled for more camera support
-    auto cfg_json   = nlohmann::json::parse(cfg_file);
-    auto cfg        = cfg_json.contains("s711") ? cfg_json.at("s711") : cfg_json.at("s710");
+    auto type = import_widget_->get_camera_type();
+
+    auto cfg_json = nlohmann::json::parse(cfg_file);
+
+    auto cfg        = cfg_json.at(camera_type_to_config_key.at(type.toStdString()));
     int  src_width  = cfg.at("Width").get<int>();
     int  src_height = cfg.at("Height").get<int>();
     return QSize(src_width, src_height);
@@ -2914,11 +2586,11 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
 
   // Advanced Settings
   {
-    s.cpu_in_size  = 4096;
-    s.gpu_in_size  = 1024;
-    s.cpu_rec_size = 4096;
-    s.cpu_out_size = 32;
-    s.gpu_out_size = 32;
+    s.cpu_in_size  = 1024; // TODO unused ?
+    s.gpu_in_size  = 16;
+    s.cpu_rec_size = 1024; // TODO unused ?
+    s.cpu_out_size = 4;
+    s.gpu_out_size = 2;
   }
 
   // Import Settings
@@ -2931,6 +2603,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     std::map<std::string, ImportSource> source_from_str{
         {"Ametek S710 Euresys Coaxlink Octo", ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO},
         {"Ametek S711 Euresys Coaxlink QSFP+", ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP},
+        {"Ametek S991 Euresys Coaxlink QSFP+", ImportSource::AMETEK_S991_EURESYS_COAXLINK_QSFP},
     };
     s.input_sampling_frequency_hz = import_widget_->get_sampling_frequency_hz();
 
@@ -2954,10 +2627,11 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
       std::ifstream cfg_file(s.camera_config_path);
       if (cfg_file.is_open()) {
         try {
+          auto type     = import_widget_->get_camera_type();
+          auto key      = camera_type_to_config_key.at(type.toStdString());
           auto cfg_json = nlohmann::json::parse(cfg_file);
-          s.load_batch  = cfg_json.contains("s711")
-                              ? cfg_json.at("s711").at("BufferPartCount").get<int>()
-                              : cfg_json.at("s710").at("BufferPartCount").get<int>();
+          s.load_batch =
+              cfg_json.contains(key) ? cfg_json.at(key).at("BufferPartCount").get<int>() : 1;
         } catch (...) {
         }
       }
@@ -2974,11 +2648,13 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
         {"Angular Spectrum", SpacialMethod::ANGULAR_SPECTRUM},
         {"LSCI (2D)", SpacialMethod::NONE},
     };
-    QString method        = render_widget_->get_space_transform();
-    s.spacial_method      = method_from_str.at(method.toStdString());
-    s.spacial_lambda      = static_cast<float>(render_widget_->get_lambda()) * 1e-9f;
-    s.spacial_z           = static_cast<float>(render_widget_->get_focus()) * 1e-3f;
-    s.spacial_pixel_size  = 20e-6f; // TODO: get from camera
+    QString method   = render_widget_->get_space_transform();
+    s.spacial_method = method_from_str.at(method.toStdString());
+    s.spacial_lambda = static_cast<float>(render_widget_->get_lambda()) * 1e-9f;
+    s.spacial_z      = static_cast<float>(render_widget_->get_focus()) * 1e-3f;
+
+    s.spacial_pixel_size = import_widget_->get_pixel_space_size() * 1e-6;
+
     s.asp_padding_enabled = render_widget_->is_asp_padding_enabled();
     s.asp_padded_width    = render_widget_->get_asp_padded_width();
     s.asp_padded_height   = render_widget_->get_asp_padded_height();
@@ -3194,6 +2870,9 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
         break;
       case ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP:
         source = "Ametek S711 Euresys Coaxlink QSFP+";
+        break;
+      case ImportSource::AMETEK_S991_EURESYS_COAXLINK_QSFP:
+        source = "Ametek S991 Euresys Coaxlink QSFP+";
         break;
       default:
         source = "Ametek S710 Euresys Coaxlink Octo";

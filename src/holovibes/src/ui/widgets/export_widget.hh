@@ -35,6 +35,7 @@ public:
   QString get_codec() const;
   QString get_resize_algorithm() const;
   QString get_file_path() const;
+  QString get_file_name_template() const;
   QString get_tag() const;
   bool    is_frame_count_enabled() const;
   int     get_frame_count() const;
@@ -43,11 +44,14 @@ public:
 
   // Setters
   void set_file_path(const QString &path);
+  void set_file_name_template(const QString &name);
   void set_frame_count(int count);
   void set_frame_batch_size(int batch_size);
   void set_image_type(const QString &type);
   void set_resize_algorithm(const QString &algorithm);
   void setChecked(bool checked);
+
+  void set_camera_recording_enabled(bool enabled);
 
   // Control button state
   void set_record_enabled(bool enabled);
@@ -64,6 +68,7 @@ public:
   QComboBox   *codec_combo();
   QComboBox   *resize_algorithm_combo();
   QLineEdit   *file_line_edit();
+  QLineEdit   *file_name_template_edit();
   QPushButton *browse_button();
   QComboBox   *tag_combo();
   QCheckBox   *frames_check();
@@ -86,6 +91,7 @@ private:
   void connect_signals();
   void update_codec_choices();
   void set_export_controls_enabled(bool enabled);
+  void update_record_queue_count_spin();
 
   QCheckBox   *enable_check_;
   QWidget     *content_container_;
@@ -94,6 +100,7 @@ private:
   QComboBox   *codec_combo_;
   QComboBox   *resize_algorithm_combo_;
   QLineEdit   *file_line_edit_;
+  QLineEdit   *file_name_template_edit_;
   QPushButton *browse_button_;
   QComboBox   *tag_combo_;
   QCheckBox   *frames_check_;
@@ -105,6 +112,8 @@ private:
   QPushButton *record_button_;
   QPushButton *stop_button_;
   QPushButton *stop_fan_button_;
+
+  bool camera_recording_enabled_ = false;
 };
 
 } // namespace holovibes::ui

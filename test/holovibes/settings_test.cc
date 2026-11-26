@@ -90,6 +90,17 @@ TEST(AngularSpectrumPaddingSettingsTest, MissingLegacyFieldsKeepDefaults) {
   EXPECT_EQ(restored.asp_padded_height, 1536);
 }
 
+TEST(FresnelImplementationSettingsTest, LegacyJsonRoundTripPreservesImplementationChoice) {
+  Settings settings{};
+  settings.fresnel_use_numpy = true;
+
+  const auto json     = settings_to_old_json(settings);
+  const auto restored = old_json_to_settings(json, Settings{});
+
+  EXPECT_TRUE(json.at("compute_settings").at("image_rendering").at("fresnel_use_numpy"));
+  EXPECT_TRUE(restored.fresnel_use_numpy);
+}
+
 TEST(AngularSpectrumPaddingSettingsTest, ValidationRejectsInvalidResolution) {
   Settings settings{};
   settings.view_type           = ViewType::PROCESSED;

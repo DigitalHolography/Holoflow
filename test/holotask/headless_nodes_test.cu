@@ -12,11 +12,13 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <thread>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -340,7 +342,23 @@ TEST(HoloTaskHeadlessTest, HolofileWriterWritesAValidTinyRecording) {
                               .cancelled = &cancelled,
                               .event_writer = &handles.out,
                               .event_reader = &handles.in};
-  ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
+  using Clock = std::chrono::steady_clock;
+  constexpr auto timeout = std::chrono::seconds(10);
+  const auto start = Clock::now();
+  bool finished = false;
+  bool failed = false;
+  while (Clock::now() - start < timeout && !finished && !failed) {
+    ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
+    router.tick();
+    while (auto event = router.ui_try_receive()) {
+      const auto &type = event->data.at("type");
+      finished |= type == "recording_finished";
+      failed |= type == "recording_failed";
+    }
+    if (!finished && !failed)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  ASSERT_TRUE(finished) << (failed ? "Recording failed" : "Recording did not finish before timeout");
   task.reset();
 
   {

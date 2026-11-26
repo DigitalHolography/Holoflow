@@ -15,6 +15,9 @@
 #include "ui/widgets/import_widget.hh"
 #include "ui/widgets/validation_style.hh"
 
+#include <filesystem>
+#include <fstream>
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QDoubleSpinBox>
@@ -29,6 +32,11 @@
 #include <QStackedLayout>
 #include <QStandardPaths>
 #include <QVBoxLayout>
+
+#include "holocam/camera_info.hh"
+#include "holofile/holofile.hh"
+#include "logger.hh"
+#include "pipeline/settings.hh"
 
 namespace holovibes::ui {
 
@@ -66,6 +74,7 @@ std::optional<int> ImportWidget::get_fps_limit() const {
   return fps_spin_->value();
 }
 double ImportWidget::get_sampling_frequency_hz() const { return sampling_frequency_spin_->value(); }
+double ImportWidget::get_pixel_space_size() const { return pixel_space_size_spin_->value(); }
 int    ImportWidget::get_start_index() const { return start_index_spin_->value(); }
 int    ImportWidget::get_end_index() const { return end_index_spin_->value(); }
 QString ImportWidget::get_load_method() const { return load_method_combo_->currentText(); }
@@ -84,7 +93,10 @@ void ImportWidget::set_end_index_range(int min, int max) { end_index_spin_->setR
 void ImportWidget::set_load_method(const QString &method) {
   load_method_combo_->setCurrentText(method);
 }
-void ImportWidget::set_camera_type(const QString &type) { camera_combo_->setCurrentText(type); }
+void ImportWidget::set_camera_type(const QString &type) {
+  camera_combo_->setCurrentText(type);
+  update_source();
+}
 void ImportWidget::set_camera_mode(bool enabled) { cam_check_->setChecked(enabled); }
 
 void ImportWidget::set_start_enabled(bool enabled) { start_button_->setEnabled(enabled); }
@@ -106,12 +118,29 @@ QPushButton    *ImportWidget::start_button() { return start_button_; }
 QPushButton    *ImportWidget::stop_button() { return stop_button_; }
 QSpinBox       *ImportWidget::fps_spin() { return fps_spin_; }
 QDoubleSpinBox *ImportWidget::sampling_frequency_spin() { return sampling_frequency_spin_; }
+QDoubleSpinBox *ImportWidget::pixel_space_size_spin() { return pixel_space_size_spin_; }
 QSpinBox       *ImportWidget::start_index_spin() { return start_index_spin_; }
 QSpinBox       *ImportWidget::end_index_spin() { return end_index_spin_; }
 QComboBox      *ImportWidget::load_method_combo() { return load_method_combo_; }
 QCheckBox      *ImportWidget::cam_check() { return cam_check_; }
 QComboBox      *ImportWidget::camera_combo() { return camera_combo_; }
 QComboBox      *ImportWidget::camera_config_combo() { return camera_config_combo_; }
+
+namespace {
+bool is_readable(const std::filesystem::path& p) {
+    std::ifstream file(p);
+    return file.good();
+}
+}
+
+bool ImportWidget::is_source_valid() {
+  if (!is_camera_mode()) {
+    const std::filesystem::path fp = get_file_path().toStdString();
+    return std::filesystem::exists(fp) && is_readable(fp);
+  }
+
+  return true;
+}
 
 void ImportWidget::setup_ui() {
   auto *main_layout = new QVBoxLayout(this);
@@ -137,6 +166,16 @@ void ImportWidget::setup_ui() {
   frequency_layout->addWidget(sampling_frequency_spin_);
   main_layout->addLayout(frequency_layout);
 
+  auto *pixel_pitch_layout = new QHBoxLayout();
+  pixel_pitch_layout->addWidget(new QLabel("Pixel space size", this));
+  pixel_space_size_spin_ = new QDoubleSpinBox(this);
+  pixel_space_size_spin_->setRange(1.0e-3, 1.0e3);
+  pixel_space_size_spin_->setDecimals(2);
+  pixel_space_size_spin_->setValue(20);
+  pixel_space_size_spin_->setSuffix(" um");
+  pixel_pitch_layout->addWidget(pixel_space_size_spin_);
+  main_layout->addLayout(pixel_pitch_layout);
+
   auto *button_layout = new QHBoxLayout();
   start_button_       = new QPushButton("Start", this);
   stop_button_        = new QPushButton("Stop", this);
@@ -156,7 +195,7 @@ void ImportWidget::connect_signals() {
     if (checked) {
       update_sampling_frequency_from_camera_config();
     }
-    emit settings_changed();
+    update_source();
   });
 
   connect(start_button_, &QPushButton::clicked, this, &ImportWidget::start_clicked);
@@ -164,10 +203,12 @@ void ImportWidget::connect_signals() {
   connect(browse_button_, &QPushButton::clicked, this, &ImportWidget::browse_clicked);
 
   // Emit settings_changed for all control changes
-  connect(file_line_edit_, &QLineEdit::editingFinished, this, &ImportWidget::settings_changed);
+  connect(file_line_edit_, &QLineEdit::editingFinished, this, &ImportWidget::update_source);
   connect(fps_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImportWidget::settings_changed);
   connect(sampling_frequency_spin_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+          &ImportWidget::settings_changed);
+  connect(pixel_space_size_spin_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
           &ImportWidget::settings_changed);
   connect(start_index_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImportWidget::settings_changed);
@@ -176,7 +217,7 @@ void ImportWidget::connect_signals() {
   connect(load_method_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ImportWidget::settings_changed);
   connect(camera_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
-          &ImportWidget::settings_changed);
+          &ImportWidget::update_source);
   connect(camera_config_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
     if (is_camera_mode()) {
       update_sampling_frequency_from_camera_config();
@@ -236,8 +277,9 @@ QWidget *ImportWidget::create_camera_page() {
   int row = 0;
 
   grid->addWidget(new QLabel("Camera", page), row, 0);
-  camera_combo_ = create_combo_box(
-      page, QStringList{"Ametek S710 Euresys Coaxlink Octo", "Ametek S711 Euresys Coaxlink QSFP+"});
+  camera_combo_ = create_combo_box(page, QStringList{"Ametek S710 Euresys Coaxlink Octo",
+                                                     "Ametek S711 Euresys Coaxlink QSFP+",
+                                                     "Ametek S991 Euresys Coaxlink QSFP+"});
   grid->addWidget(camera_combo_, row, 1);
   ++row;
 
@@ -289,6 +331,8 @@ void ImportWidget::update_sampling_frequency_from_camera_config() {
     camera = root.value("s711").toObject();
   } else if (root.value("s710").isObject()) {
     camera = root.value("s710").toObject();
+  } else if (root.value("s991").isObject()) {
+    camera = root.value("s991").toObject();
   } else {
     return;
   }
@@ -299,7 +343,10 @@ void ImportWidget::update_sampling_frequency_from_camera_config() {
   }
 }
 
-void ImportWidget::set_file_path(const QString &path) { file_line_edit_->setText(path); }
+void ImportWidget::set_file_path(const QString &path) {
+  file_line_edit_->setText(path);
+  update_source();
+}
 
 void ImportWidget::clear_validation_styles() {
   clear_validation_error(file_line_edit_);
@@ -310,4 +357,42 @@ void ImportWidget::clear_validation_styles() {
   clear_validation_error(camera_config_combo_);
 }
 
+void ImportWidget::update_source() {
+  constexpr double default_spacial_pixel_size = 20.0;
+
+  std::map<std::string, pipeline::ImportSource> source_from_str{
+      {"Ametek S710 Euresys Coaxlink Octo",
+       pipeline::ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO},
+      {"Ametek S711 Euresys Coaxlink QSFP+",
+       pipeline::ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP},
+      {"Ametek S991 Euresys Coaxlink QSFP+",
+       pipeline::ImportSource::AMETEK_S991_EURESYS_COAXLINK_QSFP},
+  };
+
+  auto spacial_pixel_size = default_spacial_pixel_size;
+  if (!is_camera_mode()) {
+    auto load_path = get_file_path().toStdString();
+    auto reader    = holofile::Reader(load_path);
+    auto footer    = reader.footer();
+    try {
+      spacial_pixel_size =
+          footer->pipeline_settings.at("info").at("pixel_pitch").at("x").get<float>();
+      logger()->debug("[ImportWidget::update_source] read spacial_pixel_size from file {}um ",
+                      spacial_pixel_size);
+    } catch (const nlohmann::json::exception&) {
+      logger()->warn("[ImportWidget::update_source] could not read pixel pitch from "
+                     "holofile fallback to default={}",
+                     default_spacial_pixel_size);
+    }
+  } else {
+    QString source      = get_camera_type();
+    auto    name        = pipeline::to_string(source_from_str.at(source.toStdString()));
+    auto    pixel_pitch = holocam::name_to_info.at(name).pixel_size;
+
+    spacial_pixel_size = pixel_pitch;
+  }
+
+  pixel_space_size_spin_->setValue(spacial_pixel_size);
+  emit settings_changed();
+}
 } // namespace holovibes::ui

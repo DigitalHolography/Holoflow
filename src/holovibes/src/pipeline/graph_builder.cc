@@ -18,6 +18,7 @@
 #include <array>
 #include <cmath>
 #include <map>
+#include <numbers>
 #include <optional>
 #include <spdlog/fmt/ranges.h>
 #include <stdexcept>
@@ -44,8 +45,8 @@ public:
 
   holoflow::core::GraphSpec build();
 
-  [[nodiscard]] std::string failure_graph_dot(
-      const holoflow::core::GraphSpecDumpPreferences &prefs) const {
+  [[nodiscard]] std::string
+  failure_graph_dot(const holoflow::core::GraphSpecDumpPreferences &prefs) const {
     return GraphBuilderTracer::failure_graph_dot(prefs);
   }
 
@@ -91,11 +92,12 @@ private:
   TDesc build_zernike_correction(const TDesc &FH, const TDesc &slopes, const ShackHartmannGeometry &geometry, bool is_last_pass, AberrationCorrectionState &state);
   void build_zernike_outputs(const AberrationCorrectionState &state, const ShackHartmannGeometry &geometry);
   TDesc build_spatial_propagation(const TDesc &FH);
+  TDesc fresnel_diffraction_numpy(const TDesc &FH);
   TDesc build_spatial_filter(const TDesc &FH_z);
   TDesc build_spatial_contrast_input(TDesc H);
   void build_spatial_contrast_view(const TDesc &frames);
   void build_xy_view(const TDesc &FH_z);
-  void build_xy_output(TDesc result, size_t discard_first);
+  void build_xy_output(TDesc result, size_t discard_first, bool fixed_contrast_range = false);
   void build_3d_cuts(const TDesc &FH_z);
   TDesc build_freq_weights();
   // clang-format on
@@ -140,8 +142,8 @@ GraphBuilder &GraphBuilder::operator=(GraphBuilder &&) noexcept = default;
 
 holoflow::core::GraphSpec GraphBuilder::build() { return impl_->build(); }
 
-std::string GraphBuilder::failure_graph_dot(
-    const holoflow::core::GraphSpecDumpPreferences &prefs) const {
+std::string
+GraphBuilder::failure_graph_dot(const holoflow::core::GraphSpecDumpPreferences &prefs) const {
   return impl_->failure_graph_dot(prefs);
 }
 
@@ -176,17 +178,17 @@ holoflow::core::GraphSpec GraphBuilder::Impl::build() {
   }
 
   if (s_.pp_local_pca) {
-    using Target = holotask::syncs::ConversionSettings::Target;
-    using Strat = holotask::syncs::ConversionSettings::Strategy;
-    auto frames = build_spatial_contrast_input(H);
+    using Target               = holotask::syncs::ConversionSettings::Target;
+    using Strat                = holotask::syncs::ConversionSettings::Strategy;
+    auto   frames              = build_spatial_contrast_input(H);
     size_t source_cycle_frames = 0;
     if (s_.import_source == ImportSource::HOLOFILE && s_.load_batch > 0 &&
         s_.load_end > s_.load_begin) {
       const int selected_frames = s_.load_end - s_.load_begin;
       source_cycle_frames = static_cast<size_t>(selected_frames / s_.load_batch * s_.load_batch);
     }
-    frames = temporal_window(frames, {.window_size = static_cast<size_t>(s_.time_window),
-                                      .stride_size = static_cast<size_t>(s_.time_stride),
+    frames = temporal_window(frames, {.window_size         = static_cast<size_t>(s_.time_window),
+                                      .stride_size         = static_cast<size_t>(s_.time_stride),
                                       .source_cycle_frames = source_cycle_frames});
     frames = convert(frames, {Target::CF32, Strat::Real});
     // Holovibes filters the complex field before Fresnel reconstruction.
@@ -194,25 +196,26 @@ holoflow::core::GraphSpec GraphBuilder::Impl::build() {
       frames = build_spatial_filter(frames);
     if (s_.spacial_method != SpacialMethod::NONE) {
       if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION)
-        frames = fresnel_diffraction(frames, {.lambda = s_.spacial_lambda,
-                                              .dx = s_.spacial_pixel_size,
-                                              .dy = s_.spacial_pixel_size,
-                                              .z = s_.spacial_z,
-                                              .axes = {-2, -1},
+        frames = fresnel_diffraction(frames, {.lambda           = s_.spacial_lambda,
+                                              .dx               = s_.spacial_pixel_size,
+                                              .dy               = s_.spacial_pixel_size,
+                                              .z                = s_.spacial_z,
+                                              .axes             = {-2, -1},
                                               .output_magnitude = false});
       else
         frames = build_spatial_propagation(frames);
     }
-    frames = ascontiguousarray(frames, {});
-    frames = local_pca(frames, {.width_x = s_.local_pca_width_x,
-                                .width_y = s_.local_pca_width_y,
-                                .stride_x = s_.local_pca_stride_x,
-                                .stride_y = s_.local_pca_stride_y,
-                                .rank_factor = s_.local_pca_rank_factor});
-    frames = slice(frames, {{holonp::SliceRange{s_.time_z_begin, s_.time_z_end}, {}, {}}});
+    frames      = ascontiguousarray(frames, {});
+    frames      = local_pca(frames, {.width_x     = s_.local_pca_width_x,
+                                     .width_y     = s_.local_pca_width_y,
+                                     .stride_x    = s_.local_pca_stride_x,
+                                     .stride_y    = s_.local_pca_stride_y,
+                                     .rank_factor = s_.local_pca_rank_factor});
+    frames      = slice(frames, {{holonp::SliceRange{s_.time_z_begin, s_.time_z_end}, {}, {}}});
     auto result = mean_abs(frames, {{0}, true});
     // Match the main XY path: center Fresnel output after temporal reduction.
-    if (s_.pp_fft_shift) result = fftshift(result, {{-2, -1}});
+    if (s_.pp_fft_shift)
+      result = fftshift(result, {{-2, -1}});
     build_xy_output(result, 0);
     return g_;
   }
@@ -224,13 +227,11 @@ holoflow::core::GraphSpec GraphBuilder::Impl::build() {
       if (s_.import_source == ImportSource::HOLOFILE && s_.load_batch > 0 &&
           s_.load_end > s_.load_begin) {
         const int selected_frames = s_.load_end - s_.load_begin;
-        source_cycle_frames = static_cast<size_t>(
-            selected_frames / s_.load_batch * s_.load_batch);
+        source_cycle_frames = static_cast<size_t>(selected_frames / s_.load_batch * s_.load_batch);
       }
-      frames = temporal_window(frames,
-                               {.window_size = static_cast<size_t>(s_.time_window),
-                                .stride_size = static_cast<size_t>(s_.time_stride),
-                                .source_cycle_frames = source_cycle_frames});
+      frames = temporal_window(frames, {.window_size         = static_cast<size_t>(s_.time_window),
+                                        .stride_size         = static_cast<size_t>(s_.time_stride),
+                                        .source_cycle_frames = source_cycle_frames});
     }
     build_spatial_contrast_view(frames);
     return g_;
@@ -289,23 +290,19 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_acquisition() {
                           .keep_cursor = false});
   }
 
-  if (s_.import_source == ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO) {
-    return ametek_s710_euresys_coaxlink_octo({cam_path});
+  std::optional<holocam::RecordSettings> record_settings = std::nullopt;
+  if (s_.can_use_camera_record()) {
+    record_settings = holocam::RecordSettings{.file_path       = s_.recording_path.string(),
+                                              .recording_count = s_.recording_count,
+                                              .pipeline_config = settings_to_old_json(s_),
+                                              .record_queue_count =
+                                                  static_cast<size_t>(s_.recording_queue_count)};
   }
 
-  if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP) {
-    holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings settings{.cfg_path = cam_path};
-    if (s_.can_use_camera_record()) {
-      settings.record_settings = holotask::sources::RecordSettings{
-          .file_path          = s_.recording_path.string(),
-          .recording_count    = s_.recording_count,
-          .pipeline_config    = settings_to_old_json(s_),
-          .record_queue_count = static_cast<size_t>(s_.recording_queue_count)};
-    }
-    return ametek_s711_euresys_coaxlink_qsfp_plus(settings);
-  }
-
-  HOLOVIBES_UNREACHABLE();
+  holotask::sources::CameraSettings settings{.cfg_path        = cam_path,
+                                             .name            = to_string(s_.import_source),
+                                             .record_settings = record_settings};
+  return camera(settings);
 }
 
 void GraphBuilder::Impl::build_raw_record(const TDesc &H) {
@@ -351,7 +348,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_preprocessing(TDesc H) {
 
   if (H.mem_loc != MemLoc::Device) {
     H = memcpy(H, {Device});
-    H = batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_window});
+    H = batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_stride});
   }
 
   return convert(H, {Target::F32, Strat::Real});
@@ -363,7 +360,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_time_frequency_analysis(TDes
   // Time-frequency analysis then operates along axis 1 (the T dimension).
   // The output is [N_pre, Nz, Hy, Hx], which feeds directly into the post-TFA queue.
 
-  int     N_pre = 4;
+  int     N_pre = 1;
   int64_t T     = static_cast<int64_t>(H.shape.at(0));
   int64_t Hy    = static_cast<int64_t>(H.shape.at(1));
   int64_t Hx    = static_cast<int64_t>(H.shape.at(2));
@@ -714,6 +711,9 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_propagation(const TD
   using Filter  = holotask::syncs::AngularSpectrumSettings::Filter;
 
   if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
+    if (s_.fresnel_use_numpy) {
+      return fresnel_diffraction_numpy(FH);
+    }
     return fresnel_diffraction(FH, {.lambda           = s_.spacial_lambda,
                                     .dx               = s_.spacial_pixel_size,
                                     .dy               = s_.spacial_pixel_size,
@@ -751,6 +751,52 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_propagation(const TD
   HOLOVIBES_UNREACHABLE();
 }
 
+GraphBuilder::Impl::TDesc GraphBuilder::Impl::fresnel_diffraction_numpy(const TDesc &FH) {
+  if (FH.shape.size() < 2) {
+    throw std::invalid_argument("NumPy Fresnel diffraction requires at least two dimensions");
+  }
+  if (s_.spacial_lambda <= 0.0f || s_.spacial_z == 0.0f || s_.spacial_pixel_size <= 0.0f) {
+    throw std::invalid_argument("NumPy Fresnel diffraction requires valid optical parameters");
+  }
+
+  const size_t height   = FH.shape[FH.shape.size() - 2];
+  const size_t width    = FH.shape[FH.shape.size() - 1];
+  const size_t size     = std::max(height, width);
+  const auto   offset_x = static_cast<double>((size - width) / 2);
+  const auto   offset_y = static_cast<double>((size - height) / 2);
+  const auto   half     = static_cast<double>(size) / 2.0;
+  const auto   dx       = static_cast<double>(s_.spacial_pixel_size);
+
+  const auto coordinate = [&](size_t extent, double offset) {
+    const double start = (offset - half) * dx;
+    const double stop  = start + (static_cast<double>(extent) - 0.5) * dx;
+    return arange({.start  = start,
+                   .stop   = stop,
+                   .step   = dx,
+                   .dtype  = holoflow::core::DType::F32,
+                   .device = holoflow::core::MemLoc::Device});
+  };
+
+  const auto                 x = coordinate(width, offset_x);
+  const auto                 y = coordinate(height, offset_y);
+  const std::array<TDesc, 2> axes{x, y};
+  const auto                 grids = meshgrid(axes, {.indexing = holonp::MeshgridIndexing::XY});
+  const auto                 radius_squared = add(square(grids[0], {}), square(grids[1], {}), {});
+
+  const auto phase_scale =
+      asarray({.value  = static_cast<double>(std::numbers::pi_v<float>) /
+                         (static_cast<double>(s_.spacial_lambda) * s_.spacial_z),
+               .dtype  = holoflow::core::DType::F32,
+               .device = holoflow::core::MemLoc::Device});
+  const auto imaginary = asarray({.value  = 0.0,
+                                  .imag   = 1.0,
+                                  .dtype  = holoflow::core::DType::CF32,
+                                  .device = holoflow::core::MemLoc::Device});
+  const auto lens = exp(multiply(multiply(radius_squared, phase_scale, {}), imaginary, {}), {});
+  const auto propagated = fft2(multiply(FH, lens, {}), {});
+  return abs(propagated, {});
+}
+
 GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_filter(const TDesc &FH_z) {
   return filter_2d(FH_z, {
                              s_.filter_r_inner,
@@ -762,7 +808,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_filter(const TDesc &
 
 GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_freq_weights() {
   auto N  = static_cast<double>(s_.time_window);
-  auto fs = 37e3;
+  auto fs = s_.input_sampling_frequency_hz;
   auto df = fs / N;
   auto f0 = s_.time_z_begin * df;
   auto f1 = s_.time_z_end * df;
@@ -802,10 +848,11 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_contrast_input(TDesc
     // Leave GPU memory for the temporal window, PCA workspace and propagation. The queue
     // allocates another input batch of slots beyond its requested capacity.
     const size_t max_frames = (std::min)(available, total) / 16 / frame_bytes;
-    queue_capacity = static_cast<int>((std::min)(static_cast<size_t>(queue_capacity),
-                                                  (std::max)(size_t{1}, max_frames)));
+    queue_capacity          = static_cast<int>(
+        (std::min)(static_cast<size_t>(queue_capacity), (std::max)(size_t{1}, max_frames)));
     if (queue_capacity < s_.gpu_in_size)
-      logger()->info("[LocalPca] GPU input queue reduced from {} to {} frames ({} MiB available, {} bytes/frame)",
+      logger()->info("[LocalPca] GPU input queue reduced from {} to {} frames ({} MiB available, "
+                     "{} bytes/frame)",
                      s_.gpu_in_size, queue_capacity, available / (1024 * 1024), frame_bytes);
   }
   H = batched_queue(H, {queue_capacity, 1, 1});
@@ -813,37 +860,32 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_contrast_input(TDesc
 }
 
 void GraphBuilder::Impl::build_spatial_contrast_view(const TDesc &frames) {
-  const size_t temporal_window_size = s_.pp_spatial_contrast_dimensions != 2
-                                          ? static_cast<size_t>(s_.time_window)
-                                          : size_t{1};
+  const size_t temporal_window_size =
+      s_.pp_spatial_contrast_dimensions != 2 ? static_cast<size_t>(s_.time_window) : size_t{1};
   if (frames.rank() != 3 || frames.shape.at(0) != temporal_window_size) {
     throw std::logic_error{"Spatial LSCI input has an unexpected temporal window shape"};
   }
 
-  auto result = spatial_contrast(frames,
-                                 {.window_size = s_.pp_spatial_contrast_dimensions == 1
-                                                     ? 1
-                                                     : s_.pp_spatial_contrast_window_size,
-                                  .temporal_window_size = static_cast<int>(temporal_window_size),
-                                  .method = s_.pp_spatial_contrast_method == 1
-                                                ? holotask::syncs::SpatialContrastMethod::FFT
-                                                : holotask::syncs::SpatialContrastMethod::Kernel});
-  if (s_.pp_fft_shift) result = fftshift(result, {{-2, -1}});
+  auto result = spatial_contrast(
+      frames, {.window_size =
+                   s_.pp_spatial_contrast_dimensions == 1 ? 1 : s_.pp_spatial_contrast_window_size,
+               .temporal_window_size = static_cast<int>(temporal_window_size),
+               .method               = s_.pp_spatial_contrast_method == 1
+                                           ? holotask::syncs::SpatialContrastMethod::FFT
+                                           : holotask::syncs::SpatialContrastMethod::Kernel});
+  if (s_.pp_fft_shift)
+    result = fftshift(result, {{-2, -1}});
   if (s_.pp_flatfield) {
     // Spatial contrast uses the camera grid for flatfield filtering.
     const auto pitch = s_.spacial_pixel_size;
-    result = flatfield(result, flatfield_settings_from_cutoff_period(
-                                   s_.pp_flatfield_cutoff_period_m, pitch, pitch));
+    result           = flatfield(result, flatfield_settings_from_cutoff_period(
+                                             s_.pp_flatfield_cutoff_period_m, pitch, pitch));
   }
-  build_xy_output(result, 0);
+  build_xy_output(result, 0, true);
 }
 
 void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
-  if (s_.pp_registration) {
-    throw std::logic_error{"Registration is currently not supported"};
-  }
-
-  TDesc result;
+  TDesc      result;
   const bool is_magnitude = FH_z.dtype == holoflow::core::DType::F32;
 
   if (s_.moment_type == MomentType::M0) {
@@ -881,13 +923,26 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
     result              = flatfield(result, flatfield_settings_from_cutoff_period(cutoff, dy, dx));
   }
 
+  // Average the small temporal batch before registration and preview accumulation.
   result = mean(result, {{0}, false}); // [1, H, W]
+
+  if (s_.pp_registration) {
+    using Target        = holotask::syncs::ConversionSettings::Target;
+    using Strat         = holotask::syncs::ConversionSettings::Strategy;
+    const auto outputs  = registration_outputs(result, {.radius = s_.pp_registration_radius});
+    result              = outputs.at(0);
+    auto output_display = fftshift(outputs.at(1), {{-2, -1}});
+    output_display      = normalize(output_display, {{-2, -1}, 0.0f, 255.0f});
+    const auto output_converted = convert(output_display, {Target::U8, Strat::Scaled});
+    registration_xcorr_display(output_converted, {});
+  }
 
   auto discard_first = s_.autofocus_enabled ? static_cast<size_t>(s_.pp_accumulation - 1) : 0;
   build_xy_output(result, discard_first);
 }
 
-void GraphBuilder::Impl::build_xy_output(TDesc result, size_t discard_first) {
+void GraphBuilder::Impl::build_xy_output(TDesc result, size_t discard_first,
+                                         bool fixed_contrast_range) {
   using Target                 = holotask::syncs::ConversionSettings::Target;
   using Strat                  = holotask::syncs::ConversionSettings::Strategy;
   using SlidingAverageSettings = holotask::asyncs::SlidingAverageSettings;
@@ -917,13 +972,19 @@ void GraphBuilder::Impl::build_xy_output(TDesc result, size_t discard_first) {
     result = pct_clip(result, pct_clip_settings);
   }
 
-  const auto convert_for_output = [&](TDesc input) {
+  // Display and recording use independent queues so neither consumer drains the other.
+  auto convert_for_output = [&](const TDesc &input) {
+    if (fixed_contrast_range) {
+      return convert(input, {Target::U8, Strat::FixedRange, s_.pp_spatial_contrast_display_max,
+                             s_.pp_spatial_contrast_invert_display});
+    }
     return convert(input, {Target::U8, Strat::Scaled});
   };
 
   // Recording needs its own branch so its reader cannot consume preview frames.
   if (s_.recording_method == RecordingMethod::PROCESSED) {
-    auto result_rec = memcpy(convert_for_output(result), {Host});
+    auto result_rec = convert_for_output(result);
+    result_rec      = memcpy(result_rec, {Host});
     result_rec      = batched_queue(result_rec, {s_.cpu_out_size, 1, 1});
 
     auto path  = s_.recording_path.string();
@@ -941,7 +1002,7 @@ void GraphBuilder::Impl::build_xy_output(TDesc result, size_t discard_first) {
   }
 
   auto display_result = convert_for_output(result);
-  display_result = batched_queue(display_result, {s_.gpu_out_size, 1, 1});
+  display_result      = batched_queue(display_result, {s_.gpu_out_size, 1, 1});
   xy_processed_display(display_result, {});
 }
 

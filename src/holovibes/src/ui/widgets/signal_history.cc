@@ -55,8 +55,7 @@ double SignalHistory::time_window_seconds() const { return time_window_seconds_;
 
 const std::deque<SignalSample> &SignalHistory::samples() const { return samples_; }
 
-std::optional<SignalStatistics>
-SignalHistory::statistics(double minimum_time_seconds) const {
+std::optional<SignalStatistics> SignalHistory::statistics(double minimum_time_seconds) const {
   std::size_t sample_count          = 0;
   double      mean                  = 0.0;
   double      squared_deviation_sum = 0.0;
@@ -76,8 +75,7 @@ SignalHistory::statistics(double minimum_time_seconds) const {
     return std::nullopt;
   }
 
-  const double variance =
-      std::max(0.0, squared_deviation_sum / static_cast<double>(sample_count));
+  const double variance = std::max(0.0, squared_deviation_sum / static_cast<double>(sample_count));
   return SignalStatistics{
       .sample_count       = sample_count,
       .mean               = mean,

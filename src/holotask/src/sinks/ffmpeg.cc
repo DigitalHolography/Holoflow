@@ -11,6 +11,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <functional>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -124,7 +127,26 @@ void validate_ffmpeg_settings(const FfmpegSettings            &settings,
   (void)choose_pixel_format(codec, geometry);
 }
 
-class FfmpegWriter final : public detail::RecordingSink {
+class FfmpegSinkWriter {
+public:
+  using FrameFn   = std::function<void(const std::uint8_t *, std::size_t)>;
+  using FooterFn  = std::function<void()>;
+  using CleanupFn = std::function<void()>;
+  FfmpegSinkWriter(FrameFn frames, FooterFn footer, CleanupFn cleanup)
+      : frames_(std::move(frames)), footer_(std::move(footer)), cleanup_(std::move(cleanup)) {}
+  ~FfmpegSinkWriter() { cleanup_(); }
+  void write_frames(const std::uint8_t *data, std::size_t count) { frames_(data, count); }
+  void write_footer() { footer_(); }
+  // Trailer writing and AVIO teardown are performed by the footer callback.
+  void flush() noexcept {}
+
+private:
+  FrameFn   frames_;
+  FooterFn  footer_;
+  CleanupFn cleanup_;
+};
+
+class FfmpegWriter final : public detail::Sink<FfmpegSinkWriter> {
 public:
   FfmpegWriter(FfmpegSettings settings, detail::RecordingGeometry geometry,
                holoflow::core::TDesc input_desc, cudaStream_t stream)
@@ -137,68 +159,23 @@ public:
         output_height_(
             settings_.resize_to_square
                 ? static_cast<int>(std::max(geometry_.frame_width, geometry_.frame_height))
-                : static_cast<int>(geometry_.frame_height)) {}
+                : static_cast<int>(geometry_.frame_height)),
+        buffer_row_stride_(
+            settings_.resize_to_square && settings_.resize_algorithm == "CudaBilinear"
+                ? static_cast<std::size_t>(output_width_) * (geometry_.bits_per_pixel / 8)
+                : static_cast<std::size_t>(geometry_.frame_width) * (geometry_.bits_per_pixel / 8)),
+        buffer_frame_stride_(
+            buffer_row_stride_ *
+            (settings_.resize_to_square && settings_.resize_algorithm == "CudaBilinear"
+                 ? static_cast<std::size_t>(output_height_)
+                 : static_cast<std::size_t>(geometry_.frame_height))),
+        frame_buffer_(static_cast<std::size_t>(settings_.count) * buffer_frame_stride_) {
+    set_recording_count(settings_.count);
+  }
 
-  ~FfmpegWriter() override { release(); }
-
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
-    handle_events(ctx);
-    if (!is_recording())
-      return holoflow::core::OpResult::Ok;
-
-    try {
-      initialize();
-      auto       &input       = ctx.inputs[0];
-      const auto  batch_size  = static_cast<int>(input.desc.shape[0]);
-      const auto  frame_count = std::min(settings_.count - frames_buffered_, batch_size);
-      const auto *data        = reinterpret_cast<const std::uint8_t *>(input.data());
-      std::vector<std::uint8_t> resized;
-      std::size_t               frame_stride = input.desc.strides[0];
-      std::size_t               row_stride   = input.desc.strides[1];
-
-      if (settings_.resize_to_square && settings_.resize_algorithm == "CudaBilinear") {
-        const auto bytes_per_pixel = geometry_.bits_per_pixel / 8;
-        const auto output_frame_bytes =
-            static_cast<std::size_t>(output_width_) * output_height_ * bytes_per_pixel;
-        resized.resize(static_cast<std::size_t>(batch_size) * output_frame_bytes);
-        if (!device_input_ || !device_output_)
-          throw std::runtime_error("CUDA resize buffers are not initialized");
-        check_cuda(cudaMemcpyAsync(device_input_->data(), input.data(), input.desc.num_bytes(),
-                                   cudaMemcpyHostToDevice, cuda_stream_),
-                   "cudaMemcpyAsync (resize input)");
-        holotask::syncs::detail::launch_resize_bilinear_cuda(
-            device_input_->data(), device_output_->data(), static_cast<std::size_t>(batch_size),
-            geometry_.frame_height, geometry_.frame_width, input.desc.strides[0],
-            input.desc.strides[1], output_height_, output_width_, bytes_per_pixel, cuda_stream_);
-        check_cuda(cudaMemcpyAsync(resized.data(), device_output_->data(), resized.size(),
-                                   cudaMemcpyDeviceToHost, cuda_stream_),
-                   "cudaMemcpyAsync (resize output)");
-        check_cuda(cudaStreamSynchronize(cuda_stream_), "cudaStreamSynchronize (resize output)");
-        data         = resized.data();
-        frame_stride = output_frame_bytes;
-        row_stride   = static_cast<std::size_t>(output_width_) * bytes_per_pixel;
-      }
-
-      for (int index = 0; index < frame_count; ++index) {
-        encode_frame(data + static_cast<std::size_t>(index) * frame_stride, row_stride);
-        ++frames_buffered_;
-      }
-
-      monitor_.update(ctx, frames_buffered_, frames_buffered_);
-      if (frames_buffered_ >= settings_.count) {
-        finalize();
-        emit_finished_event(ctx);
-        reset();
-      }
-    } catch (const std::exception &error) {
-      release();
-      if (!recording_path().empty())
-        (void)std::remove(recording_path().c_str());
-      emit_failed_event(ctx, error.what());
-      reset();
-    }
-
-    return holoflow::core::OpResult::Ok;
+  ~FfmpegWriter() override {
+    shutdown_async_writer();
+    release();
   }
 
   bool can_reuse(const FfmpegSettings &settings, detail::RecordingGeometry geometry,
@@ -213,32 +190,100 @@ public:
   }
 
   void update_settings(FfmpegSettings settings) {
+    // The worker reads settings during encoder construction and footer writing.
+    // Reconfigure only while idle to avoid races with worker access.
+    if (recording_)
+      return;
     settings_ = std::move(settings);
+    set_recording_count(settings_.count);
     update_recording_path(settings_.path);
   }
 
   void update_stream(cudaStream_t stream) { cuda_stream_ = stream; }
 
 protected:
-  void recording_stopped_callback() override { release(); }
-  void recording_reset_callback() override { release(); }
+  void on_sink_reset() override { release(); }
   void recording_path_update_callback() override { settings_.path = recording_path(); }
 
 private:
+  void ensure_cuda_resize_buffers() {
+    if (device_input_ && device_output_)
+      return;
+    auto input_device_desc    = input_desc_;
+    input_device_desc.mem_loc = holoflow::core::MemLoc::Device;
+    device_input_             = std::make_unique<holoflow::core::Tensor>(input_device_desc);
+    device_output_            = std::make_unique<holoflow::core::Tensor>(
+        holoflow::core::TDesc({input_desc_.shape[0], static_cast<std::size_t>(output_height_),
+                               static_cast<std::size_t>(output_width_)},
+                              input_desc_.dtype, holoflow::core::MemLoc::Device));
+  }
+
+  int buffer_input(holoflow::core::SyncCtx &ctx, int max_frames) override {
+    auto       &input        = ctx.inputs[0];
+    const auto  batch_size   = static_cast<int>(input.desc.shape[0]);
+    const auto  frame_count  = std::min(max_frames, batch_size);
+    const auto *data         = reinterpret_cast<const std::uint8_t *>(input.data());
+    std::size_t frame_stride = input.desc.strides[0];
+    std::size_t row_stride   = input.desc.strides[1];
+    const bool  cuda_resized =
+        settings_.resize_to_square && settings_.resize_algorithm == "CudaBilinear";
+    if (frame_count > 0 && cuda_resized) {
+      ensure_cuda_resize_buffers();
+      const auto bpp          = geometry_.bits_per_pixel / 8;
+      const auto output_bytes = static_cast<std::size_t>(output_width_) * output_height_ * bpp;
+      if (!device_input_ || !device_output_)
+        throw std::runtime_error("CUDA resize buffers are not initialized");
+      check_cuda(cudaMemcpyAsync(device_input_->data(), input.data(), input.desc.num_bytes(),
+                                 cudaMemcpyHostToDevice, cuda_stream_),
+                 "cudaMemcpyAsync (resize input)");
+      holotask::syncs::detail::launch_resize_bilinear_cuda(
+          device_input_->data(), device_output_->data(), static_cast<std::size_t>(frame_count),
+          geometry_.frame_height, geometry_.frame_width, input.desc.strides[0],
+          input.desc.strides[1], output_height_, output_width_, bpp, cuda_stream_);
+      auto *destination =
+          frame_buffer_.data() + static_cast<std::size_t>(frames_buffered_) * buffer_frame_stride_;
+      check_cuda(cudaMemcpyAsync(destination, device_output_->data(),
+                                 static_cast<std::size_t>(frame_count) * output_bytes,
+                                 cudaMemcpyDeviceToHost, cuda_stream_),
+                 "cudaMemcpyAsync (resize output)");
+      check_cuda(cudaStreamSynchronize(cuda_stream_), "cudaStreamSynchronize (resize output)");
+      return frame_count;
+    }
+    const auto source_height = cuda_resized ? static_cast<std::size_t>(output_height_)
+                                            : static_cast<std::size_t>(geometry_.frame_height);
+    for (int index = 0; index < frame_count; ++index) {
+      auto *destination = frame_buffer_.data() +
+                          static_cast<std::size_t>(frames_buffered_ + index) * buffer_frame_stride_;
+      const auto *source = data + static_cast<std::size_t>(index) * frame_stride;
+      for (std::size_t row = 0; row < source_height; ++row)
+        std::memcpy(destination + row * buffer_row_stride_, source + row * row_stride,
+                    buffer_row_stride_);
+    }
+    return frame_count;
+  }
+  std::size_t         buffered_frame_size() const override { return buffer_frame_stride_; }
+  const std::uint8_t *buffered_data(std::size_t index) const override {
+    return frame_buffer_.data() + index * buffer_frame_stride_;
+  }
+  void make_writer() override {
+    encoded_frames_ = 0;
+    emplace_writer(
+        [this](const std::uint8_t *data, std::size_t count) { encode_frames(data, count); },
+        [this]() { finish_encoding(); }, [this]() { release(); });
+  }
+  void writer_start() override { initialize(); }
+  void on_execute_error(holoflow::core::SyncCtx &ctx, const std::exception &error) override {
+    reset(); // Stop/join the writer before releasing FFmpeg state.
+    remove_recording_file();
+    emit_failed_event(ctx, error.what());
+  }
+
   void initialize() {
     if (format_context_ != nullptr)
       return;
 
+    footer_completed_ = false;
     validate_ffmpeg_settings(settings_, geometry_);
-    if (settings_.resize_to_square && settings_.resize_algorithm == "CudaBilinear") {
-      auto input_device_desc    = input_desc_;
-      input_device_desc.mem_loc = holoflow::core::MemLoc::Device;
-      device_input_             = std::make_unique<holoflow::core::Tensor>(input_device_desc);
-      device_output_            = std::make_unique<holoflow::core::Tensor>(
-          holoflow::core::TDesc({input_desc_.shape[0], static_cast<std::size_t>(output_height_),
-                                 static_cast<std::size_t>(output_width_)},
-                                input_desc_.dtype, holoflow::core::MemLoc::Device));
-    }
     const auto *codec    = avcodec_find_encoder_by_name(settings_.codec.c_str());
     output_pixel_format_ = choose_pixel_format(codec, geometry_);
 
@@ -315,7 +360,7 @@ private:
                   frame_->linesize) <= 0)
       throw std::runtime_error("sws_scale failed");
 
-    frame_->pts = frames_buffered_;
+    frame_->pts = encoded_frames_++;
     check_ffmpeg(avcodec_send_frame(codec_context_, frame_), "avcodec_send_frame");
     write_packets();
   }
@@ -334,11 +379,41 @@ private:
     }
   }
 
-  void finalize() {
+  void encode_frames(const std::uint8_t *data, std::size_t count) {
+    for (std::size_t i = 0; i < count; ++i) {
+      encode_frame(data + i * buffer_frame_stride_, buffer_row_stride_);
+    }
+  }
+
+  void finish_encoding() {
+    if (footer_completed_)
+      return;
+    if (codec_context_ == nullptr || format_context_ == nullptr) {
+      // No encoder/output was opened (e.g. an empty or partially initialized writer).
+      // release() is still safe and repeated calls remain harmless.
+      release();
+      footer_completed_ = true;
+      return;
+    }
+
     check_ffmpeg(avcodec_send_frame(codec_context_, nullptr), "avcodec_send_frame (flush)");
-    write_packets();
+    while (true) {
+      const auto result = avcodec_receive_packet(codec_context_, packet_);
+      if (result == AVERROR_EOF)
+        break;
+      if (result == AVERROR(EAGAIN))
+        throw std::runtime_error("FFmpeg encoder requested input while draining");
+      check_ffmpeg(result, "avcodec_receive_packet (flush)");
+      av_packet_rescale_ts(packet_, codec_context_->time_base, stream_->time_base);
+      packet_->stream_index = stream_->index;
+      check_ffmpeg(av_interleaved_write_frame(format_context_, packet_),
+                   "av_interleaved_write_frame (flush)");
+      av_packet_unref(packet_);
+    }
+
     check_ffmpeg(av_write_trailer(format_context_), "av_write_trailer");
     release();
+    footer_completed_ = true;
   }
 
   void release() noexcept {
@@ -365,6 +440,11 @@ private:
   cudaStream_t                            cuda_stream_ = static_cast<cudaStream_t>(0);
   int                                     output_width_;
   int                                     output_height_;
+  std::size_t                             buffer_row_stride_;
+  std::size_t                             buffer_frame_stride_;
+  std::vector<std::uint8_t>               frame_buffer_;
+  bool                                    footer_completed_ = false;
+  int                                     encoded_frames_   = 0;
   std::unique_ptr<holoflow::core::Tensor> device_input_;
   std::unique_ptr<holoflow::core::Tensor> device_output_;
   AVFormatContext                        *format_context_      = nullptr;

@@ -97,6 +97,7 @@ size_t num_elements(std::span<const size_t> shape) {
 template <typename InT>
 __global__ void horizontal_sums_kernel(const InT *__restrict__ input, float2 *__restrict__ sums,
                                        int width, int height, int window_size,
+                                       int temporal_window_size,
                                        int64_t total_elements) {
   const int64_t idx = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   if (idx >= total_elements) {
@@ -112,11 +113,14 @@ __global__ void horizontal_sums_kernel(const InT *__restrict__ input, float2 *__
   const int     x_begin      = x > radius ? x - radius : 0;
   const int     x_end        = (x + radius < width) ? x + radius : width - 1;
 
+  // Center before squaring so a large intensity baseline does not erase small variance.
+  const float baseline = static_cast<float>(input[(idx / (plane_size * temporal_window_size)) *
+                                                 plane_size * temporal_window_size]);
   float sum         = 0.0F;
   float squared_sum = 0.0F;
   const int64_t row_offset = plane_offset + static_cast<int64_t>(y) * width;
   for (int sample_x = x_begin; sample_x <= x_end; ++sample_x) {
-    const float value = static_cast<float>(input[row_offset + sample_x]);
+    const float value = static_cast<float>(input[row_offset + sample_x]) - baseline;
     sum += value;
     squared_sum += value * value;
   }
@@ -133,22 +137,26 @@ __global__ void temporal_contrast_kernel(const InT *__restrict__ input, float *_
     return;
 
   const int64_t plane_size = static_cast<int64_t>(width) * height;
+  const float baseline = static_cast<float>(input[idx]);
   float         sum         = 0.0F;
   float         squared_sum = 0.0F;
   for (int time = 0; time < temporal_window_size; ++time) {
     const float value =
-        static_cast<float>(input[static_cast<int64_t>(time) * plane_size + idx]);
+        static_cast<float>(input[static_cast<int64_t>(time) * plane_size + idx]) - baseline;
     sum += value;
     squared_sum += value * value;
   }
 
-  const float mean     = sum / static_cast<float>(temporal_window_size);
-  const float variance =
-      fmaxf(squared_sum / static_cast<float>(temporal_window_size) - mean * mean, 0.0F);
+  const float centered_mean = sum / static_cast<float>(temporal_window_size);
+  const float mean = baseline + centered_mean;
+  const float variance = fmaxf(squared_sum / static_cast<float>(temporal_window_size) -
+                                  centered_mean * centered_mean, 0.0F);
   output[idx] = mean > 0.0F ? sqrtf(variance) / mean : 0.0F;
 }
 
-__global__ void contrast_from_sums_kernel(const float2 *__restrict__ horizontal_sums,
+template <typename InT>
+__global__ void contrast_from_sums_kernel(const InT *__restrict__ input,
+                                          const float2 *__restrict__ horizontal_sums,
                                           float *__restrict__ output, int width, int height,
                                           int window_size, int temporal_window_size,
                                           int64_t output_elements) {
@@ -168,6 +176,7 @@ __global__ void contrast_from_sums_kernel(const float2 *__restrict__ horizontal_
   const int     x_begin      = x > radius ? x - radius : 0;
   const int     x_end        = (x + radius < width) ? x + radius : width - 1;
 
+  const float baseline = static_cast<float>(input[plane_offset * temporal_window_size]);
   float sum         = 0.0F;
   float squared_sum = 0.0F;
   for (int time = 0; time < temporal_window_size; ++time) {
@@ -183,9 +192,10 @@ __global__ void contrast_from_sums_kernel(const float2 *__restrict__ horizontal_
 
   const int64_t sample_count = static_cast<int64_t>(temporal_window_size) *
                                (x_end - x_begin + 1) * (y_end - y_begin + 1);
-  const float mean         = sum / static_cast<float>(sample_count);
-  const float variance =
-      fmaxf(squared_sum / static_cast<float>(sample_count) - mean * mean, 0.0F);
+  const float centered_mean = sum / static_cast<float>(sample_count);
+  const float mean = baseline + centered_mean;
+  const float variance = fmaxf(squared_sum / static_cast<float>(sample_count) -
+                                  centered_mean * centered_mean, 0.0F);
   output[idx] = mean > 0.0F ? sqrtf(variance) / mean : 0.0F;
 }
 
@@ -427,9 +437,10 @@ public:
     const auto enqueue = [&](const auto *typed_input) {
       horizontal_sums_kernel<<<grid_size, block_size, 0, stream_>>>(
           typed_input, horizontal_sums_.get(), width_, height_, settings_.window_size,
+          temporal_window_size_,
           total_elements_);
       contrast_from_sums_kernel<<<output_grid_size, block_size, 0, stream_>>>(
-          horizontal_sums_.get(), output, width_, height_, settings_.window_size,
+          typed_input, horizontal_sums_.get(), output, width_, height_, settings_.window_size,
           temporal_window_size_, output_elements_);
     };
 

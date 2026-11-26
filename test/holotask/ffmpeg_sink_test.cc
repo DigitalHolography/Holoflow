@@ -5,7 +5,10 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
+#include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -13,6 +16,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -60,14 +64,25 @@ void start_recording(RecordingContext &recording, const std::string &path) {
   recording.router.tick();
 }
 
-std::optional<holoflow_event::Event> receive_event(RecordingContext &recording) {
-  recording.router.tick();
-  while (auto event = recording.router.ui_try_receive()) {
-    const auto type = event->data.at("type");
-    if (type == "recording_finished" || type == "recording_failed")
-      return event;
+std::vector<holoflow_event::Event> pump_until_terminal(
+    holoflow::core::ISyncTask &task, holoflow::core::SyncCtx &ctx,
+    RecordingContext &recording, std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
+  std::vector<holoflow_event::Event> events;
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    (void)task.execute(ctx);
+    recording.router.tick();
+    bool terminal = false;
+    while (auto event = recording.router.ui_try_receive()) {
+      const auto type = event->data.at("type");
+      terminal |= type == "recording_finished" || type == "recording_failed";
+      events.push_back(std::move(*event));
+    }
+    if (terminal)
+      break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
-  return std::nullopt;
+  return events;
 }
 
 void expect_rejected(const holotask::sinks::FfmpegFactory &factory, TDesc input,
@@ -179,12 +194,15 @@ void decode_u16(const std::filesystem::path &path, int &width, int &height, int 
 
 } // namespace
 
-TEST(FfmpegSinkTest, AcceptsSupportedInputs) {
+TEST(FfmpegSinkTest, AcceptsSupportedInputsAndBatchDivisibleCount) {
   holotask::sinks::FfmpegFactory factory;
   const std::vector<TDesc>       u8_input{desc(DType::U8)};
   const std::vector<TDesc>       u16_input{desc(DType::U16)};
   EXPECT_EQ(factory.infer(u8_input, settings("test.mkv")).input_descs[0].dtype, DType::U8);
   EXPECT_EQ(factory.infer(u16_input, settings("test.mkv")).input_descs[0].dtype, DType::U16);
+  const std::vector<TDesc> batch_input{desc(DType::U8, 2)};
+  EXPECT_EQ(factory.infer(batch_input, settings("test.mkv", 2)).input_descs[0].shape[0], 2);
+  expect_rejected(factory, desc(DType::U8, 3), settings("x.mkv", 2));
 }
 
 TEST(FfmpegSinkTest, RejectsInvalidInputsAndSettings) {
@@ -194,22 +212,45 @@ TEST(FfmpegSinkTest, RejectsInvalidInputsAndSettings) {
   expect_rejected(factory, TDesc({2, 4}, DType::U8, MemLoc::Host), settings("x.mkv"));
   expect_rejected(factory, desc(), settings("x.mkv", 0));
   expect_rejected(factory, desc(), settings("x.mkv", 2, 0.0));
+  expect_rejected(factory, desc(), settings("x.mkv", 2, std::numeric_limits<double>::infinity()));
   expect_rejected(factory, desc(), settings("x.mkv", 2, 25.0, "unknown", "ffv1"));
   expect_rejected(factory, desc(), settings("x.mkv", 2, 25.0, "matroska", "unknown"));
   expect_rejected(factory, desc(), settings("x.webm", 2, 25.0, "webm", "ffv1"));
   expect_rejected(factory, desc(DType::U16), settings("x.mp4", 2, 25.0, "mp4", "mpeg4"));
-  expect_rejected(factory, desc(DType::U8, 3), settings("x.mkv", 2));
 }
 
-TEST(FfmpegSinkTest, ReusesOnlyWhenEncoderSettingsAndGeometryMatch) {
+TEST(FfmpegSinkTest, ValidatesResizeAlgorithmOnlyWhenResizingIsEnabled) {
+  holotask::sinks::FfmpegFactory factory;
+  auto disabled = settings("x.mkv");
+  disabled["resize_algorithm"] = "not-an-algorithm";
+  const std::vector<TDesc> input{desc()};
+  EXPECT_NO_THROW(factory.infer(input, disabled));
+
+  auto enabled = settings("x.mkv");
+  enabled["resize_to_square"] = true;
+  enabled["resize_algorithm"] = "not-an-algorithm";
+  expect_rejected(factory, desc(), enabled);
+}
+
+TEST(FfmpegSinkTest, ReusesOnlyWhenAllEncoderAndGeometrySettingsMatch) {
   holotask::sinks::FfmpegFactory factory;
   const std::vector<TDesc>       input{desc()};
   auto                           task = factory.create(input, settings("first.mkv"), {});
-  auto                          *old  = task.get();
+  auto                          *original = task.get();
+
   task = factory.update(std::move(task), input, settings("second.mkv"), {});
-  EXPECT_EQ(task.get(), old);
+  EXPECT_EQ(task.get(), original); // Path changes are mutable while the writer is idle.
+
+  original = task.get();
   task = factory.update(std::move(task), input, settings("third.mkv", 4), {});
-  EXPECT_NE(task.get(), old);
+  EXPECT_NE(task.get(), original); // Count is part of the reuse contract.
+
+  original = task.get();
+  auto resized = settings("fourth.mkv");
+  resized["resize_to_square"] = true;
+  resized["resize_algorithm"] = "CpuBilinear";
+  task = factory.update(std::move(task), input, resized, {});
+  EXPECT_NE(task.get(), original);
 }
 
 TEST(FfmpegSinkTest, EncodesU8FramesAndEmitsCompletion) {
@@ -229,19 +270,18 @@ TEST(FfmpegSinkTest, EncodesU8FramesAndEmitsCompletion) {
   start_recording(recording, path.string());
   ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
   ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
-
-  recording.router.tick();
+  const auto events = pump_until_terminal(*task, ctx, recording);
 
   size_t recorded = 0;
-  bool   flushed  = false;
+  bool   flushed = false;
   bool   finished = false;
-  while (auto update = recording.router.ui_try_receive()) {
-    if (update->data.at("type") == "recording_update")
-      recorded = update->data.value("frame_recorded", 0);
-    flushed |= update->data.at("type") == "record_flushing_finished";
-    finished |= update->data.at("type") == "recording_finished";
+  for (const auto &event : events) {
+    const auto type = event.data.at("type");
+    if (type == "recording_update")
+      recorded = event.data.value("frame_recorded", 0);
+    flushed |= type == "record_flushing_finished";
+    finished |= type == "recording_finished";
   }
-
   EXPECT_EQ(recorded, 2);
   EXPECT_TRUE(flushed);
   EXPECT_TRUE(finished);
@@ -275,6 +315,10 @@ TEST(FfmpegSinkTest, EncodesLosslessU16Frames) {
   start_recording(recording, path.string());
   ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
   ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
+  const auto events = pump_until_terminal(*task, ctx, recording);
+  ASSERT_TRUE(std::any_of(events.begin(), events.end(), [](const auto &event) {
+    return event.data.at("type") == "recording_finished";
+  }));
 
   int                        width  = 0;
   int                        height = 0;
@@ -286,6 +330,37 @@ TEST(FfmpegSinkTest, EncodesLosslessU16Frames) {
   EXPECT_EQ(decoded, expected);
   EXPECT_EQ(width, 4);
   EXPECT_EQ(height, 2);
+  EXPECT_EQ(frames, 2);
+  std::filesystem::remove(path);
+}
+
+TEST(FfmpegSinkTest, ResizesRectangularFramesToSquareOutput) {
+  const auto path = test_path("holoflow_ffmpeg_sink_square.mkv");
+  std::filesystem::remove(path);
+  auto video_settings = settings(path.string());
+  video_settings["resize_to_square"] = true;
+  video_settings["resize_algorithm"] = "CpuBilinear";
+  holotask::sinks::FfmpegFactory factory;
+  const std::vector<TDesc> input_descs{desc()};
+  auto task = factory.create(input_descs, video_settings, {});
+  task->bind_logger(spdlog::default_logger());
+  RecordingContext recording;
+  holoflow::core::Tensor tensor(input_descs[0]);
+  std::array<holoflow::core::TView, 1> inputs{tensor.view()};
+  holoflow::core::SyncCtx ctx{inputs, {}, nullptr, &recording.handles.out, &recording.handles.in};
+
+  start_recording(recording, path.string());
+  ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
+  ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
+  const auto events = pump_until_terminal(*task, ctx, recording);
+  ASSERT_TRUE(std::any_of(events.begin(), events.end(), [](const auto &event) {
+    return event.data.at("type") == "recording_finished";
+  }));
+  int width = 0, height = 0, frames = 0;
+  std::vector<std::uint8_t> decoded;
+  decode_u8(path, width, height, frames, decoded);
+  EXPECT_EQ(width, 4);
+  EXPECT_EQ(height, 4);
   EXPECT_EQ(frames, 2);
   std::filesystem::remove(path);
 }
@@ -310,22 +385,25 @@ TEST(FfmpegSinkTest, RemovesIncompleteOutputAfterStopRecording) {
   EXPECT_FALSE(std::filesystem::exists(path));
 }
 
-TEST(FfmpegSinkTest, ReportsOutputCreationFailure) {
-  const auto path = test_path("holoflow_missing_ffmpeg_directory") / "recording.mkv";
-  std::filesystem::remove(path);
+TEST(FfmpegSinkTest, ReportsOutputCreationFailureFromWriterThread) {
+  const auto directory = test_path("holoflow_missing_ffmpeg_directory");
+  std::filesystem::remove_all(directory);
+  const auto path = directory / "recording.mkv";
   holotask::sinks::FfmpegFactory factory;
-  const std::vector<TDesc>       input_descs{desc()};
-  auto                           task = factory.create(input_descs, settings(path.string(), 1), {});
+  const std::vector<TDesc> input_descs{desc()};
+  auto task = factory.create(input_descs, settings(path.string(), 1), {});
   task->bind_logger(spdlog::default_logger());
-  RecordingContext                     recording;
-  holoflow::core::Tensor               tensor(input_descs[0]);
+  RecordingContext recording;
+  holoflow::core::Tensor tensor(input_descs[0]);
   std::array<holoflow::core::TView, 1> inputs{tensor.view()};
   holoflow::core::SyncCtx ctx{inputs, {}, nullptr, &recording.handles.out, &recording.handles.in};
 
   start_recording(recording, path.string());
   ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
-  const auto event = receive_event(recording);
-  ASSERT_TRUE(event.has_value());
-  EXPECT_EQ(event->data.at("type"), "recording_failed");
-  EXPECT_NE(event->data.at("message").get<std::string>().find("failed"), std::string::npos);
+  const auto events = pump_until_terminal(*task, ctx, recording);
+  const auto failed = std::find_if(events.begin(), events.end(), [](const auto &event) {
+    return event.data.at("type") == "recording_failed";
+  });
+  ASSERT_NE(failed, events.end());
+  EXPECT_NE(failed->data.at("message").get<std::string>().find("failed"), std::string::npos);
 }
