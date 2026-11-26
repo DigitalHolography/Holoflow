@@ -437,6 +437,39 @@ class HolographyDemoTest(unittest.TestCase):
             np.testing.assert_allclose(decomposed, native, rtol=2e-4,
                                        atol=2e-6 * np.max(np.abs(native)))
 
+    def test_phase_fusion_matches_primitives(self):
+        from holography_demo import aberration_ops
+
+        path = self.root / "phase_fusion.holo"
+        write_holo(path, frames=18, width=21, height=16)
+
+        def pipeline(modes, shared):
+            x = hf.sources.holofile(path, batch_size=9, loop=False).to("device").astype(hf.float32)
+            coefficients = hf.mean(x, axis=(-2, -1))[:len(modes)] * 1e-4
+            outputs = []
+            for field in (x, x * (1 + 0.5j)):
+                phase = aberration_ops.zernike_phase(coefficients, modes, 16, 21)
+                outputs.append(hf.sinks.numpy(aberration_ops.apply_phase(field, phase)))
+                if shared:
+                    outputs.append(hf.sinks.numpy(phase.reshape((1, 16, 21))))
+            return tuple(outputs)
+
+        cases = [([4], False), ([6, 4, 5], False), (list(range(2, 11)), False), ([4, 5, 6], True)]
+        for modes, shared in cases:
+            with self.subTest(modes=modes, shared=shared):
+                graph = hf.trace(pipeline, modes, shared)
+                results = []
+                for enabled in (False, True):
+                    with graph.compile(log_dir=self.root / "phase", capture=False,
+                                       fuse_tasks=enabled) as run:
+                        run.start()
+                        results.append(run.result())
+                        dot = run.artifacts.compiled_dot.read_text(encoding="utf-8")
+                    self.assertEqual(dot.count("(FusedPhaseCorrection)"), 2 if enabled and not shared else 0)
+                for expected, actual in zip(*results, strict=True):
+                    np.testing.assert_allclose(actual, expected, rtol=2e-4,
+                                               atol=2e-6 * np.max(np.abs(expected)))
+
     def test_tiled_fft_fusion_matches_primitives(self):
         from holography_demo.aberration_ops import subaperture_fresnel
 
@@ -695,6 +728,21 @@ class HolographyDemoTest(unittest.TestCase):
         self.assertEqual(outputs["coefficients"].shape, (4, 3))
         self.assertEqual(outputs["phase"].shape, (4, 320, 512))
         self.assertEqual(outputs["shack_hartmann"].shape, (4, 320, 510))
+
+        from dataclasses import replace
+
+        headless = replace(config, viewer={**config.viewer, "enabled": False, "cao_diagnostics": False})
+        with hf.trace(pipeline, headless).compile(log_dir=self.root / "fp16_phase", capture=False) as run:
+            run.start()
+            run.wait()
+            self.assertTrue(run.completed())
+            dot = run.artifacts.compiled_dot.read_text(encoding="utf-8")
+        self.assertIn("(FusedPhaseCorrection)", dot)
+        self.assertIn("tiled cuFFT callbacks", dot)
+        self.assertIn(r'\"target\": \"F32\"', dot)
+        if hf._native.supports_sm120():
+            self.assertIn("SM120 cuFFTDx", dot)
+            self.assertIn(r'\"target\": \"CF16\"', dot)
 
     def test_fused_matmul_returns_full_gram(self):
         self.write_fp16_fixture(32)

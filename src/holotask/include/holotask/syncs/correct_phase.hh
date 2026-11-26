@@ -56,4 +56,14 @@ public:
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 
+class FusedPhaseCorrectionFactory final : public holoflow::core::ISyncTaskFactory {
+public:
+  static constexpr size_t     max_terms = 9;
+  holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> inputs,
+                                    const nlohmann::json                  &settings) const override;
+  std::unique_ptr<holoflow::core::ISyncTask>
+  create(std::span<const holoflow::core::TDesc> inputs, const nlohmann::json &settings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+};
+
 } // namespace holotask::syncs

@@ -84,8 +84,7 @@ bool is_c_contiguous(const holoflow::core::TDesc &desc) {
 
 template <typename Input, typename Output>
 __global__ void correct_phase_real_kernel(const Input *input, const float *phase_mask,
-                                          Output *output, int total_size,
-                                                 int plane_size) {
+                                          Output *output, int total_size, int plane_size) {
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx < total_size) {
     const float intensity = static_cast<float>(input[idx]);
@@ -124,7 +123,8 @@ __global__ void correct_phase_cf32_kernel(const cuFloatComplex *input, const flo
 
 class CorrectPhase : public holoflow::core::ISyncTask {
 public:
-  CorrectPhase(CorrectPhaseSettings settings, holoflow::core::DType input_dtype, cudaStream_t stream)
+  CorrectPhase(CorrectPhaseSettings settings, holoflow::core::DType input_dtype,
+               cudaStream_t stream)
       : settings_(std::move(settings)), input_dtype_(input_dtype), stream_(stream) {}
 
   bool supports_cuda_graph() const noexcept override { return true; }
@@ -153,12 +153,12 @@ public:
             input, phase_mask, reinterpret_cast<__half2 *>(ctx.outputs[0].data()), total_size,
             plane_size);
       else
-        correct_phase_real_kernel<<<grid_size, block_size, 0, stream_>>>(
-            input, phase_mask, output, total_size, plane_size);
+        correct_phase_real_kernel<<<grid_size, block_size, 0, stream_>>>(input, phase_mask, output,
+                                                                         total_size, plane_size);
     } else if (idesc.dtype == holoflow::core::DType::F32) {
       auto *input = reinterpret_cast<const float *>(ctx.inputs[0].data());
-      correct_phase_real_kernel<<<grid_size, block_size, 0, stream_>>>(
-          input, phase_mask, output, total_size, plane_size);
+      correct_phase_real_kernel<<<grid_size, block_size, 0, stream_>>>(input, phase_mask, output,
+                                                                       total_size, plane_size);
     } else {
       auto *input = reinterpret_cast<const cuFloatComplex *>(ctx.inputs[0].data());
       correct_phase_cf32_kernel<<<grid_size, block_size, 0, stream_>>>(input, phase_mask, output,
@@ -176,9 +176,9 @@ public:
   }
 
 private:
-  CorrectPhaseSettings settings_;
+  CorrectPhaseSettings  settings_;
   holoflow::core::DType input_dtype_;
-  cudaStream_t         stream_;
+  cudaStream_t          stream_;
 };
 
 } // namespace
@@ -200,7 +200,8 @@ CorrectPhaseFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "input must be in device memory");
   check(mdesc.mem_loc == holoflow::core::MemLoc::Device, "phase mask must be in device memory");
   check(idesc.dtype == holoflow::core::DType::F32 || idesc.dtype == holoflow::core::DType::CF32 ||
-            idesc.dtype == holoflow::core::DType::F16, "input dtype must be F32, F16, or CF32");
+            idesc.dtype == holoflow::core::DType::F16,
+        "input dtype must be F32, F16, or CF32");
   check(!settings.output_cf16 || idesc.dtype == holoflow::core::DType::F16,
         "CF16 output requires real F16 input");
   check(mdesc.dtype == holoflow::core::DType::F32, "phase mask dtype must be F32");
@@ -214,9 +215,9 @@ CorrectPhaseFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(is_c_contiguous(idesc), "input must be C-contiguous");
   check(is_c_contiguous(mdesc), "phase mask must be C-contiguous");
 
-  holoflow::core::TDesc odesc(idesc.shape, settings.output_cf16 ? holoflow::core::DType::CF16
-                                                         : holoflow::core::DType::CF32,
-                                   idesc.mem_loc);
+  holoflow::core::TDesc odesc(
+      idesc.shape, settings.output_cf16 ? holoflow::core::DType::CF16 : holoflow::core::DType::CF32,
+      idesc.mem_loc);
 
   return holoflow::core::InferResult{
       .input_descs   = {idesc, mdesc},
@@ -261,6 +262,125 @@ CorrectPhaseFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   ctx.invalidate_execution();
 
   return create(input_descs, jsettings, ctx);
+}
+
+// -------------------------------------------------------------------------------------------------
+// Fused phase correction
+// -------------------------------------------------------------------------------------------------
+
+namespace {
+struct PhaseTerms {
+  const float *basis[FusedPhaseCorrectionFactory::max_terms];
+  const float *coefficient[FusedPhaseCorrectionFactory::max_terms];
+  size_t       count;
+};
+
+template <typename Field>
+__global__ void fused_phase_kernel(const Field *field, cuFloatComplex *output, PhaseTerms terms,
+                                   size_t pixels, size_t total, float scalar_real) {
+  const size_t pixel = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (pixel >= pixels)
+    return;
+  float phase = __fmul_rn(terms.basis[0][pixel], *terms.coefficient[0]);
+  for (size_t term = 1; term < terms.count; ++term) {
+    const float value = __fmul_rn(terms.basis[term][pixel], *terms.coefficient[term]);
+    phase             = __fadd_rn(phase, value);
+  }
+  const auto exponent =
+      cuCmulf(make_cuFloatComplex(scalar_real, -1.0f), make_cuFloatComplex(phase, 0.0f));
+  float sine, cosine;
+  sincosf(exponent.y, &sine, &cosine);
+  const float scale    = expf(exponent.x);
+  const auto  rotation = make_cuFloatComplex(scale * cosine, scale * sine);
+  for (size_t index = pixel; index < total; index += pixels) {
+    auto value = make_cuFloatComplex(0.0f, 0.0f);
+    if constexpr (std::is_same_v<Field, float>)
+      value.x = field[index];
+    else
+      value = field[index];
+    output[index] = cuCmulf(value, rotation);
+  }
+}
+
+class FusedPhaseCorrection final : public holoflow::core::ISyncTask {
+public:
+  FusedPhaseCorrection(cudaStream_t stream, float scalar_real)
+      : stream_(stream), scalar_real_(scalar_real) {}
+
+  bool supports_cuda_graph() const noexcept override { return true; }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, nullptr, nullptr, nullptr};
+    (void)execute(execution);
+  }
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    PhaseTerms terms{};
+    terms.count = (ctx.inputs.size() - 1) / 2;
+    for (size_t term = 0; term < terms.count; ++term) {
+      terms.basis[term]       = reinterpret_cast<const float *>(ctx.inputs[1 + 2 * term].data());
+      terms.coefficient[term] = reinterpret_cast<const float *>(ctx.inputs[2 + 2 * term].data());
+    }
+    auto              &field  = ctx.inputs[0];
+    auto              *output = reinterpret_cast<cuFloatComplex *>(ctx.outputs[0].data());
+    const size_t       pixels = ctx.inputs[1].desc.num_elements();
+    const size_t       total  = field.desc.num_elements();
+    constexpr unsigned block  = 256;
+    const auto         grid   = static_cast<unsigned>((pixels + block - 1) / block);
+    if (field.desc.dtype == holoflow::core::DType::F32) {
+      fused_phase_kernel<<<grid, block, 0, stream_>>>(reinterpret_cast<const float *>(field.data()),
+                                                      output, terms, pixels, total, scalar_real_);
+    } else {
+      fused_phase_kernel<<<grid, block, 0, stream_>>>(
+          reinterpret_cast<const cuFloatComplex *>(field.data()), output, terms, pixels, total,
+          scalar_real_);
+    }
+    CUDA_CHECK(cudaGetLastError());
+    return holoflow::core::OpResult::Ok;
+  }
+
+private:
+  cudaStream_t stream_;
+  float        scalar_real_;
+};
+} // namespace
+
+holoflow::core::InferResult
+FusedPhaseCorrectionFactory::infer(std::span<const holoflow::core::TDesc> inputs,
+                                   const nlohmann::json &) const {
+  using namespace holoflow::core;
+  check(inputs.size() >= 3 && inputs.size() <= 1 + 2 * max_terms && inputs.size() % 2 == 1,
+        "expected a field and one to nine basis/coefficient pairs");
+  const auto &field = inputs[0];
+  check(field.rank() >= 2 && field.num_elements() > 0 && field.mem_loc == MemLoc::Device &&
+            is_c_contiguous(field) && (field.dtype == DType::F32 || field.dtype == DType::CF32),
+        "expected a nonempty contiguous FP32 or complex FP32 device field");
+  const std::vector<size_t> spatial{field.shape[field.rank() - 2], field.shape.back()};
+  for (size_t i = 1; i < inputs.size(); i += 2) {
+    const auto &basis       = inputs[i];
+    const auto &coefficient = inputs[i + 1];
+    check(basis.shape == spatial && basis.dtype == DType::F32 && basis.mem_loc == MemLoc::Device &&
+              is_c_contiguous(basis),
+          "expected an FP32 basis map on the field's spatial grid");
+    check(coefficient.dtype == DType::F32 && coefficient.mem_loc == MemLoc::Device &&
+              coefficient.shape == std::vector<size_t>{1},
+          "expected a single FP32 coefficient");
+  }
+  return {.input_descs   = {inputs.begin(), inputs.end()},
+          .output_descs  = {TDesc(field.shape, DType::CF32, MemLoc::Device)},
+          .in_place      = {},
+          .owned_inputs  = std::vector<bool>(inputs.size(), false),
+          .owned_outputs = {false},
+          .kind          = TaskKind::Sync};
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+FusedPhaseCorrectionFactory::create(std::span<const holoflow::core::TDesc> inputs,
+                                    const nlohmann::json                  &settings,
+                                    const holoflow::core::SyncCreateCtx   &ctx) const {
+  (void)infer(inputs, settings);
+  return std::make_unique<FusedPhaseCorrection>(ctx.stream,
+                                                settings.at("scalar_real").get<float>());
 }
 
 } // namespace holotask::syncs

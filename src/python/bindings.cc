@@ -5,6 +5,7 @@
 #include "fft_fusion.hh"
 #include "finite_graph.hh"
 #include "latency.hh"
+#include "phase_fusion.hh"
 #include "throughput.hh"
 #include <algorithm>
 #include <condition_variable>
@@ -100,6 +101,8 @@ public:
 std::unique_ptr<hc::Registry> make_registry(bool include_lowered_tasks = false) {
   auto r = std::make_unique<hc::Registry>();
   if (include_lowered_tasks) {
+    r->register_sync("FusedPhaseCorrection",
+                     std::make_unique<holotask::syncs::FusedPhaseCorrectionFactory>());
     r->register_sync("FusedFFT2", std::make_unique<holoflow::python::FusedFft2Factory>(*r));
     r->register_sync("FusedMatmul", std::make_unique<holotask::syncs::FusedMatmulFactory>());
   }
@@ -215,16 +218,18 @@ public:
       : capture_(!log_dir.empty() && capture ? std::make_unique<ProfileCapture>(log_dir) : nullptr),
         log_dir_(log_dir), registry_(make_registry(true)),
         compiler_(std::make_unique<hr::Compiler>(
-            *registry_, hr::Compiler::Config{
-                            .log_dir             = log_dir,
-                            .dump_dot_on_failure = !log_dir.empty(),
-                            .verbose_tracing     = false,
-                            .enable_profiling    = false,
-                            .lower_tasks = fuse_tasks ? holoflow::python::lower_fft_tasks : nullptr,
-                            .lower_matmul_tasks =
-                                fuse_tasks ? holotask::syncs::lower_matmul_tasks : nullptr})) {
+            *registry_,
+            hr::Compiler::Config{
+                .log_dir             = log_dir,
+                .dump_dot_on_failure = !log_dir.empty(),
+                .verbose_tracing     = false,
+                .enable_profiling    = false,
+                .lower_tasks         = fuse_tasks ? holoflow::python::lower_fft_tasks : nullptr,
+                .lower_matmul_tasks  = fuse_tasks ? holotask::syncs::lower_matmul_tasks : nullptr,
+                .lower_phase_tasks = fuse_tasks ? holoflow::python::lower_phase_tasks : nullptr})) {
     for (const auto v : boost::make_iterator_range(vertices(spec))) {
-      if (spec[v].kind == "FusedFFT2" || spec[v].kind == "FusedMatmul")
+      if (spec[v].kind == "FusedFFT2" || spec[v].kind == "FusedMatmul" ||
+          spec[v].kind == "FusedPhaseCorrection")
         throw std::invalid_argument(spec[v].kind + " is an internal compiler task");
       node_ids_.insert(spec[v].name);
     }

@@ -58,6 +58,8 @@ public:
         4096; ///< Strict product cap per section; zero disables graphs.
     std::function<std::optional<core::GraphSpec>(const GraphPlan &, const core::Registry &)>
         lower_matmul_tasks;
+    std::function<std::optional<core::GraphSpec>(const GraphPlan &, const core::Registry &)>
+        lower_phase_tasks;
   };
 
   explicit Compiler(core::Registry &registry, Config config = {});
