@@ -53,6 +53,27 @@ class AberrationTest(unittest.TestCase):
             np.testing.assert_allclose(result["avg"], reference, rtol=1e-5)
             np.testing.assert_array_equal(result["slice"], expected[:, 1:, 1:3])
 
+    def test_finite_independent_readers_join_by_position(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "input.holo"
+            write_holo(path, frames=8, width=8, height=8)
+            expected = np.frombuffer(path.read_bytes(), dtype=np.uint16, offset=64)
+            expected = expected.reshape(8, 8, 8)[:6].astype(np.float32) * 2
+            expected = np.concatenate((expected[:3], expected[3:]), axis=1)
+
+            def graph(separate_sections):
+                source = hf.sources.holofile(path, batch_size=1, loop=False)
+                x = source.to("device").astype(hf.float32)
+                branch, direct = hf.multi_reader_batch_queue(x, 3, 3, 3, 2, tail="drop")
+                paired = hf.batch_queue(hf.copy(branch), 3, 3, 3) if separate_sections else branch
+                return hf.sinks.numpy(direct + paired, axis=1)
+
+            for separate_sections in (False, True):
+                with self.subTest(separate_sections=separate_sections):
+                    with hf.trace(graph, separate_sections).compile(capture=False) as run:
+                        run.start()
+                        np.testing.assert_array_equal(run.result(), expected)
+
     def test_complete_aberration_graph(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "input.holo"
@@ -532,9 +553,10 @@ class HolographyDemoTest(unittest.TestCase):
         nodes = hf.trace(pipeline, config).to_json()["nodes"].values()
         by_type = {node["type"]: node["params"] for node in nodes}
         self.assertNotIn("Pca", by_type)
-        queue = by_type["PcaDecompositionQueue"]
-        self.assertEqual((queue["batch_size"], queue["slot_count"]), (4, 3))
-        self.assertTrue(queue["use_fused_f16"])
+        queue = by_type["MultiReaderBatchQueue"]
+        self.assertEqual((queue["reader_count"], queue["output_stride"]), (2, 128))
+        self.assertIn("PcaCovariance", by_type)
+        self.assertIn("SymmetricEigendecomposition", by_type)
         self.assertEqual(by_type["PcaProjection"]["output_dtype"], "F16")
         self.assertTrue(by_type["FFT2"]["prefer_fp16"])
         self.assertEqual(by_type["DualReaderBatchQueue"]["window_size"], 64)

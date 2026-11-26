@@ -68,7 +68,7 @@ std::vector<size_t> resolve_shape(const std::vector<int64_t> &target_shape, size
 std::optional<std::vector<size_t>> compute_view_strides(const std::vector<size_t> &old_shape,
                                                         const std::vector<size_t> &old_strides,
                                                         const std::vector<size_t> &new_shape,
-                                                        size_t                    element_size) {
+                                                        size_t                     element_size) {
 
   // Edge case: Empty tensor. Just return standard C-contiguous strides.
   size_t numel = 1;
@@ -266,9 +266,9 @@ ReshapeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   const auto &src      = input_descs[0];
   auto        settings = jsettings.get<ReshapeSettings>();
 
-  auto out_shape    = resolve_shape(settings.shape, src.num_elements());
-  auto view_strides = compute_view_strides(src.shape, src.strides, out_shape,
-                                           holoflow::core::size_of(src.dtype));
+  auto out_shape = resolve_shape(settings.shape, src.num_elements());
+  auto view_strides =
+      compute_view_strides(src.shape, src.strides, out_shape, holoflow::core::size_of(src.dtype));
 
   // Decide if we must copy
   bool must_copy = false;
@@ -292,7 +292,7 @@ ReshapeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
     out_desc         = src;
     out_desc.shape   = out_shape;
     out_desc.strides = view_strides.value(); // Apply the freshly computed strides
-    in_place         = {{0, 0}};
+    in_place         = {{0, 0, true}};
   }
 
   return {.input_descs   = {src},

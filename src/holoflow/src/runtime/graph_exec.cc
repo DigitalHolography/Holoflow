@@ -249,13 +249,14 @@ private:
           commit_trace(task_range_name("commit outputs", spec)),
           release_trace(task_range_name("release outputs", spec)) {}
 
-    core::IAsyncTask        *task = nullptr;
-    std::string              pop_range_name;
-    std::string              push_range_name;
-    std::vector<core::TView> in_views;
-    std::vector<core::TView> out_views;
-    core::AsyncPushCtx       pctx{};
-    core::AsyncPopCtx        xctx{};
+    core::IAsyncTask                     *task = nullptr;
+    std::string                           pop_range_name;
+    std::string                           push_range_name;
+    std::vector<core::TView>              in_views;
+    std::vector<core::TView>              out_views;
+    std::vector<std::vector<core::TView>> group_views;
+    core::AsyncPushCtx                    pctx{};
+    core::AsyncPopCtx                     xctx{};
     nvtx3::registered_string wait_input, wait_output, push_trace, commit_trace, release_trace;
   };
 
@@ -278,7 +279,7 @@ private:
 
   void run_section(int section_id);
   bool inputs_closed(GraphPlan::vertex_descriptor v) const;
-  void finish_section();
+  void finish_section(int section_id);
   bool run_prequeued_section(int section_id);
   void retire_prequeued(int section_id, bool cleanup = false);
 
@@ -340,10 +341,12 @@ private:
     std::vector<GraphPlan::vertex_descriptor> completed_const_nodes;
   };
   std::vector<SectionCheckpoint> checkpoints_;
+  std::vector<uint8_t>           section_finished_;
   struct Reservation {
     GraphPlan::vertex_descriptor node;
     core::AsyncTicket            ticket;
     uint64_t                     duration_ns = 0;
+    size_t                       group       = 0;
   };
   struct InFlight {
     InFlight() { CUDA_CHECK(cudaEventCreateWithFlags(&done, cudaEventDisableTiming)); }
@@ -352,6 +355,8 @@ private:
     InFlight                &operator=(const InFlight &) = delete;
     cudaEvent_t              done                        = nullptr;
     std::vector<Reservation> pushes, pops;
+    bool                     acquired  = false;
+    size_t                   next_sync = 0;
     // Storage is shared by task contexts. Save addresses, rather than copying mutable TViews.
     std::vector<std::pair<core::Storage *, std::byte *>> bindings;
     struct OwnedOutput {
@@ -376,13 +381,15 @@ private:
       else
         window_full.clear();
     }
-    nvtx3::registered_string                                         section_name;
-    nvtx3::registered_string                                         full_name;
-    std::map<GraphPlan::vertex_descriptor, nvtx3::registered_string> wait_input, wait_output;
-    std::array<InFlight, 2>                                          slots;
-    size_t                                                           head = 0, size = 0;
-    uint64_t                                                         next_iteration = 0;
-    detail::PrequeueNvtxCondition                                    window_full;
+    nvtx3::registered_string section_name;
+    nvtx3::registered_string full_name;
+    std::map<std::pair<GraphPlan::vertex_descriptor, size_t>, nvtx3::registered_string> wait_input;
+    std::map<GraphPlan::vertex_descriptor, nvtx3::registered_string>                    wait_output;
+    std::vector<uint8_t>                                                                group_eof;
+    std::array<InFlight, 2>                                                             slots;
+    size_t                        head = 0, size = 0;
+    uint64_t                      next_iteration = 0;
+    detail::PrequeueNvtxCondition window_full;
   };
   std::vector<std::unique_ptr<PrequeueState>> prequeues_;
   const GraphPlan                            &graph_;    ///< The computational graph to execute.
@@ -619,6 +626,7 @@ void Scheduler::Impl::start() {
     std::ranges::fill(node_ran_, 0);
     std::ranges::fill(producer_closed_, 0);
     checkpoints_.assign(sections_.size(), SectionCheckpoint{});
+    section_finished_.assign(sections_.size(), 0);
     tasks_cancelled_ = false;
   }
   if (sections_.empty()) {
@@ -733,9 +741,27 @@ void Scheduler::Impl::wait() {
   // A pause may already have joined its workers. Abort/destruction must still return held
   // outputs (including camera DMA buffers) before compatible tasks migrate to a new compilation.
   if (aborted_.load()) {
-    for (size_t i = 0; i < prequeues_.size(); ++i)
-      while (prequeues_[i] && prequeues_[i]->size)
+    for (size_t i = 0; i < prequeues_.size(); ++i) {
+      if (!prequeues_[i])
+        continue;
+      auto &state = *prequeues_[i];
+      while (state.size)
         retire_prequeued(static_cast<int>(i), true);
+      auto &slot = state.slots[state.head];
+      if (slot.acquired) {
+        for (auto it = slot.pops.rbegin(); it != slot.pops.rend(); ++it)
+          std::get<AsyncRt>(node_rts_.at(it->node))
+              .task->cancel_output_group(it->group, it->ticket);
+        for (auto it = slot.pushes.rbegin(); it != slot.pushes.rend(); ++it)
+          std::get<AsyncRt>(node_rts_.at(it->node)).task->cancel_push(it->ticket);
+        release_prequeued_outputs(static_cast<int>(i), slot);
+        slot.pops.clear();
+        slot.pushes.clear();
+        slot.bindings.clear();
+        slot.acquired  = false;
+        slot.next_sync = 0;
+      }
+    }
     for (auto &checkpoint : checkpoints_) {
       const bool   releasing = checkpoint.stage == SectionCheckpoint::Stage::Release;
       const size_t first     = releasing ? checkpoint.node : 0;
@@ -755,13 +781,12 @@ void Scheduler::Impl::wait() {
   // including when a previously paused scheduler is stopped or destroyed.
   if (!completed() && !paused_.load() && !tasks_cancelled_) {
     for (const auto &section : sections_) {
-      for (auto v : section.async_cons)
-        cancel_async(v);
       for (auto v : section.sync_topo)
         cancel_sync(v);
-      for (auto v : section.async_prod)
-        cancel_async(v);
     }
+    for (auto v : boost::make_iterator_range(vertices(graph_)))
+      if (graph_[v].infer.kind == core::TaskKind::Async)
+        cancel_async(v);
     tasks_cancelled_ = true;
   }
   logger()->info("[Scheduler::wait] Scheduler stopped");
@@ -882,9 +907,14 @@ void Scheduler::Impl::build_nodes_rts() {
       art.out_views       = out_views;
       art.pctx.inputs     = art.in_views;
       art.pctx.cancelled  = &stop_;
-      art.xctx.outputs    = art.out_views;
-      art.xctx.cancelled  = &stop_;
-      node_rts_.at(idx)   = std::move(art);
+      for (const auto &group : np.infer.output_groups) {
+        auto &views = art.group_views.emplace_back();
+        for (const auto port : group)
+          views.push_back(out_views[port]);
+      }
+      art.xctx.outputs   = art.out_views;
+      art.xctx.cancelled = &stop_;
+      node_rts_.at(idx)  = std::move(art);
     } else {
       HOLOFLOW_BUG("Task for node {} is neither sync nor async", np.spec.name);
     }
@@ -935,7 +965,8 @@ bool Scheduler::Impl::inputs_closed(GraphPlan::vertex_descriptor v) const {
   return closed != 0 || (open == 0 && in_degree(v, graph_) != 0 && node_ran_[v] != 0);
 }
 
-void Scheduler::Impl::finish_section() {
+void Scheduler::Impl::finish_section(int section_id) {
+  section_finished_.at(section_id) = 1;
   if (finished_sections_.fetch_add(1) + 1 == sections_.size()) {
     completed_.store(true);
     stop_.store(true);
@@ -1019,13 +1050,15 @@ void Scheduler::Impl::retire_prequeued(int section_id, bool cleanup) {
     detail::current_node_name() = graph_[reservation.node].spec.name;
     auto               &runtime = std::get<AsyncRt>(node_rts_.at(reservation.node));
     nvtx3::scoped_range task_range{runtime.release_trace};
-    runtime.task->release_pop(reservation.ticket);
+    runtime.task->release_output_group(reservation.group, reservation.ticket);
   }
   release_prequeued_outputs(section_id, slot);
   slot.pushes.clear();
   slot.pops.clear();
   slot.bindings.clear();
-  state.head = (state.head + 1) % state.slots.size();
+  slot.acquired  = false;
+  slot.next_sync = 0;
+  state.head     = (state.head + 1) % state.slots.size();
   --state.size;
   state.update_window();
   res_.section_cuda_graphs.at(section_id)
@@ -1038,16 +1071,36 @@ bool Scheduler::Impl::run_prequeued_section(int section_id) {
   auto        graph_it         = res_.section_cuda_graphs.find(section.id);
   const auto  ordinary_reason  = ordinary_prequeue_reason(section);
   const bool  ordinary_allowed = ordinary_reason.empty();
-  if (!section.supports_prequeue || graph_it == res_.section_cuda_graphs.end() ||
-      (!graph_it->second->enabled && !ordinary_allowed))
+  const bool  transactional =
+      section.requires_reservations ||
+      (finite_mode_ && section.supports_prequeue && section.async_cons.size() > 1 &&
+       std::ranges::all_of(section.async_cons,
+                           [&](auto v) { return graph_[v].infer.reserved_pop_eof; }) &&
+       ordinary_allowed);
+  const bool   serial_body = section.requires_reservations && !ordinary_allowed;
+  const size_t depth       = finite_mode_ || serial_body || !section.supports_prequeue ? 1 : 2;
+  if (section.requires_reservations && finite_mode_ &&
+      !std::ranges::all_of(section.async_cons,
+                           [&](auto v) { return graph_[v].infer.reserved_pop_eof; }))
+    throw std::runtime_error("Section requires finite reserved pops");
+  if ((finite_mode_ && !transactional) ||
+      (!section.supports_prequeue && !section.requires_reservations) ||
+      graph_it == res_.section_cuda_graphs.end() ||
+      (!graph_it->second->enabled && !ordinary_allowed && !serial_body))
     return false;
   auto &graphs = *graph_it->second;
-  auto &owner  = prequeues_.at(section_id);
+  graphs.prequeue_depth.store(depth, std::memory_order_relaxed);
+  auto &owner = prequeues_.at(section_id);
   if (!owner) {
     owner = std::make_unique<PrequeueState>(section.name);
-    for (auto v : section.async_cons)
+    owner->group_eof.resize(section.async_cons.size());
+    for (size_t i = 0; i < section.async_cons.size(); ++i) {
+      const auto v     = section.async_cons[i];
+      const auto group = section.async_cons_groups.empty() ? 0 : section.async_cons_groups[i];
       owner->wait_input.try_emplace(
-          v, std::format("{} / Waiting for input: {}", section.name, graph_[v].spec.name));
+          std::pair{v, group},
+          std::format("{} / Waiting for input: {} [{}]", section.name, graph_[v].spec.name, group));
+    }
     for (auto v : section.async_prod)
       owner->wait_output.try_emplace(
           v, std::format("{} / Waiting for output slot: {}", section.name, graph_[v].spec.name));
@@ -1067,10 +1120,16 @@ bool Scheduler::Impl::run_prequeued_section(int section_id) {
   detail::PrequeueNvtxCondition pressure;
   using Phase         = detail::PrequeueNvtxPhase;
   const auto rollback = [&](InFlight &slot) {
-    for (auto it = slot.pops.rbegin(); it != slot.pops.rend(); ++it)
-      std::get<AsyncRt>(node_rts_.at(it->node)).task->cancel_pop(it->ticket);
+    const auto cancel_pops = [&] {
+      for (auto it = slot.pops.rbegin(); it != slot.pops.rend(); ++it)
+        std::get<AsyncRt>(node_rts_.at(it->node)).task->cancel_output_group(it->group, it->ticket);
+    };
+    if (!finite_mode_)
+      cancel_pops();
     for (auto it = slot.pushes.rbegin(); it != slot.pushes.rend(); ++it)
       std::get<AsyncRt>(node_rts_.at(it->node)).task->cancel_push(it->ticket);
+    if (finite_mode_)
+      cancel_pops();
     slot.pushes.clear();
     slot.pops.clear();
     slot.bindings.clear();
@@ -1089,7 +1148,7 @@ bool Scheduler::Impl::run_prequeued_section(int section_id) {
   };
   try {
     while (!stop_.load()) {
-      if (state.size == state.slots.size()) {
+      if (state.size == depth) {
         ranges.end_operation();
         retire_prequeued(section_id);
         continue;
@@ -1100,55 +1159,100 @@ bool Scheduler::Impl::run_prequeued_section(int section_id) {
       ranges.operation(*slot.trace);
       ranges.phase(Phase::Acquire);
       bool ready = true;
-      {
-        for (auto v : section.async_prod) {
-          detail::current_node_name() = graph_[v].spec.name;
-          auto             &runtime   = std::get<AsyncRt>(node_rts_.at(v));
-          core::AsyncTicket ticket;
-          const auto        result = runtime.task->reserve_push(runtime.pctx, ticket);
-          if (!control(result)) {
-            if (result == core::OpResult::NotReady) {
-              ranges.wait(runtime.wait_output);
-              pressure.set(state.wait_output.at(v), state.size, nvtx3::rgb{225, 87, 89});
-            }
-            ready = false;
-            break;
-          }
-          slot.pushes.push_back({v, ticket});
-          for (size_t port = 0; port < runtime.in_views.size(); ++port)
-            if (graph_[v].infer.owned_inputs[port]) {
-              auto *storage = runtime.in_views[port].storage;
-              slot.bindings.emplace_back(storage, storage->ptr);
-            }
-        }
-        if (ready)
-          for (auto v : section.async_cons) {
+      if (!slot.acquired) {
+        const auto reserve_outputs = [&] {
+          for (auto v : section.async_prod) {
             detail::current_node_name() = graph_[v].spec.name;
             auto             &runtime   = std::get<AsyncRt>(node_rts_.at(v));
             core::AsyncTicket ticket;
-            const auto        pop_started = std::chrono::steady_clock::now();
-            const auto        result      = runtime.task->reserve_pop(runtime.xctx, ticket);
+            const auto        result = runtime.task->reserve_push(runtime.pctx, ticket);
             if (!control(result)) {
               if (result == core::OpResult::NotReady) {
-                ranges.wait(runtime.wait_input);
-                pressure.set(state.wait_input.at(v), state.size, nvtx3::rgb{176, 122, 161});
+                ranges.wait(runtime.wait_output);
+                pressure.set(state.wait_output.at(v), state.size, nvtx3::rgb{225, 87, 89});
               }
               ready = false;
               break;
             }
-            slot.pops.push_back(
-                {v, ticket,
-                 static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                           std::chrono::steady_clock::now() - pop_started)
-                                           .count())});
-            for (size_t port = 0; port < runtime.out_views.size(); ++port)
-              if (graph_[v].infer.owned_outputs[port]) {
-                auto *storage = runtime.out_views[port].storage;
+            slot.pushes.push_back({v, ticket});
+            for (size_t port = 0; port < runtime.in_views.size(); ++port)
+              if (graph_[v].infer.owned_inputs[port]) {
+                auto *storage = runtime.in_views[port].storage;
                 slot.bindings.emplace_back(storage, storage->ptr);
               }
           }
+        };
+        if (!finite_mode_)
+          reserve_outputs();
+        size_t eof = 0;
+        for (size_t i = 0; (ready || finite_mode_) && i < section.async_cons.size(); ++i) {
+          if (finite_mode_ && state.group_eof[i]) {
+            ++eof;
+            ready = false;
+            continue;
+          }
+          const auto v     = section.async_cons[i];
+          const auto group = section.async_cons_groups.empty() ? 0 : section.async_cons_groups[i];
+          detail::current_node_name() = graph_[v].spec.name;
+          auto             &runtime   = std::get<AsyncRt>(node_rts_.at(v));
+          const auto       &groups    = graph_[v].infer.output_groups;
+          auto             &views = groups.empty() ? runtime.out_views : runtime.group_views[group];
+          core::AsyncPopCtx ctx{views, &stop_};
+          core::AsyncTicket ticket;
+          const auto        started = std::chrono::steady_clock::now();
+          const auto        result  = runtime.task->reserve_output_group(group, ctx, ticket);
+          if (finite_mode_ && result == core::OpResult::Eof) {
+            state.group_eof[i] = 1;
+            ++eof;
+            ready = false;
+            continue;
+          }
+          if (!control(result)) {
+            ready = false;
+            if (result == core::OpResult::NotReady) {
+              ranges.wait(runtime.wait_input);
+              pressure.set(state.wait_input.at({v, group}), state.size, nvtx3::rgb{225, 87, 89});
+              if (finite_mode_)
+                continue;
+            }
+            break;
+          }
+          slot.pops.push_back(
+              {v, ticket,
+               static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                         std::chrono::steady_clock::now() - started)
+                                         .count()),
+               group});
+          for (size_t i = 0; i < views.size(); ++i) {
+            const auto port = groups.empty() ? i : groups[group][i];
+            if (graph_[v].infer.owned_outputs[port]) {
+              auto *storage = views[i].storage;
+              slot.bindings.emplace_back(storage, storage->ptr);
+            }
+          }
+        }
+        if (eof && !stop_.load()) {
+          if (!slot.pops.empty())
+            throw std::runtime_error("Changing input streams have unequal lengths");
+          if (eof == section.async_cons.size()) {
+            for (auto v : section.sync_topo) {
+              auto &runtime = std::get<SyncRt>(node_rts_.at(v));
+              runtime.task->end_of_stream(runtime.ctx);
+              node_eof_[v] = 1;
+            }
+            CUDA_CHECK(cudaStreamSynchronize(section.stream));
+            for (auto v : section.async_prod) {
+              std::get<AsyncRt>(node_rts_.at(v)).task->close_input();
+              producer_closed_[v] = 1;
+            }
+            finish_section(section_id);
+            break;
+          }
+        }
+        if (finite_mode_ && ready)
+          reserve_outputs();
       }
-      if (!ready || stop_.load()) {
+      if (!ready || (stop_.load() && !slot.acquired)) {
         rollback(slot);
         if (!stop_.load() && state.size) {
           // A queue becoming ready can let us replace the retired slot while the other
@@ -1167,6 +1271,7 @@ bool Scheduler::Impl::run_prequeued_section(int section_id) {
           std::this_thread::yield();
         continue;
       }
+      slot.acquired = true;
       pressure.clear();
       ranges.phase(Phase::Compute);
       detail::current_node_name() = {};
@@ -1186,7 +1291,8 @@ bool Scheduler::Impl::run_prequeued_section(int section_id) {
           graphs.diagnostics["prequeue_fallback_reason"] = ordinary_allowed ? "" : ordinary_reason;
           graphs.diagnostics["prequeue_execution_mode"]  = ordinary_allowed ? "ordinary" : "serial";
         }
-        if (ordinary_allowed)
+        slot.acquired = false;
+        if (ordinary_allowed || serial_body)
           continue;
         return false;
       }
@@ -1212,9 +1318,14 @@ bool Scheduler::Impl::run_prequeued_section(int section_id) {
       } else {
         // Once host execution advances a source cursor, submit the complete bounded iteration
         // before observing pause/stop. Retrying a partially executed source would skip data.
-        for (auto v : section.sync_topo) {
+        for (; slot.next_sync < section.sync_topo.size(); ++slot.next_sync) {
+          const auto v                = section.sync_topo[slot.next_sync];
           detail::current_node_name() = graph_[v].spec.name;
-          (void)run_sync(v, true);
+          const auto result           = run_sync(v, !serial_body);
+          if (serial_body && result == core::OpResult::Cancelled)
+            break;
+          if (result != core::OpResult::Ok)
+            throw std::runtime_error("Unexpected control result during a reserved iteration");
           const auto observer = sync_observers.find(v);
           if (observer != sync_observers.end() && !observer->second.after_barrier)
             observer->second.notify(std::chrono::steady_clock::now());
@@ -1225,6 +1336,8 @@ bool Scheduler::Impl::run_prequeued_section(int section_id) {
               slot.owned_outputs.push_back({v, port, storage, storage->ptr});
             }
         }
+        if (slot.next_sync != section.sync_topo.size())
+          break;
         graphs.ordinary_iterations.fetch_add(1, std::memory_order_relaxed);
       }
       ranges.phase(Phase::Push);
@@ -1244,8 +1357,17 @@ bool Scheduler::Impl::run_prequeued_section(int section_id) {
       slot.trace->mark_submitted();
       ranges.end_operation();
       for (const auto &reservation : slot.pops) {
-        auto &runtime       = std::get<AsyncRt>(node_rts_.at(reservation.node));
-        auto [host, device] = sum_bytes(runtime.out_views);
+        auto       &runtime = std::get<AsyncRt>(node_rts_.at(reservation.node));
+        const auto &groups  = graph_[reservation.node].infer.output_groups;
+        auto [host, device] =
+            sum_bytes(groups.empty() ? std::span<const core::TView>(runtime.out_views)
+                                     : std::span<const core::TView>{});
+        if (!groups.empty())
+          for (auto port : groups[reservation.group]) {
+            const auto [port_host, port_device] = sum_bytes(std::span(&runtime.out_views[port], 1));
+            host += port_host;
+            device += port_device;
+          }
         record_node_sample(reservation.node, reservation.duration_ns, host, device);
       }
       ++state.size;
@@ -1266,7 +1388,8 @@ bool Scheduler::Impl::run_prequeued_section(int section_id) {
         // Failed async enqueue operations may already own submitted tickets. Such tasks are
         // abandoned on this fatal path; cancellation is best effort after GPU access ends.
         for (auto it = slot.pops.rbegin(); it != slot.pops.rend(); ++it)
-          std::get<AsyncRt>(node_rts_.at(it->node)).task->cancel_pop(it->ticket);
+          std::get<AsyncRt>(node_rts_.at(it->node))
+              .task->cancel_output_group(it->group, it->ticket);
         for (auto it = slot.pushes.rbegin(); it != slot.pushes.rend(); ++it) {
           try {
             std::get<AsyncRt>(node_rts_.at(it->node)).task->cancel_push(it->ticket);
@@ -1280,6 +1403,8 @@ bool Scheduler::Impl::run_prequeued_section(int section_id) {
         slot.pushes.clear();
         slot.pops.clear();
         slot.bindings.clear();
+        slot.acquired  = false;
+        slot.next_sync = 0;
       } catch (...) {
         // Scheduler::wait still drains every section stream before task destruction.
       }
@@ -1404,15 +1529,17 @@ void Scheduler::Impl::run_section(int section_id) {
     if (stop_.load()) {
       return;
     }
+    if (section_finished_.at(section_id))
+      return;
     const bool section_has_recurring_work =
         !sec.sync_topo.empty() || !sec.async_cons.empty() || !sec.async_prod.empty();
     if (!section_has_recurring_work) {
       if (finite_mode_)
-        finish_section();
+        finish_section(section_id);
       return;
     }
 
-    if (!finite_mode_ && run_prequeued_section(section_id))
+    if (run_prequeued_section(section_id))
       return;
 
     while (!stop_.load()) {
@@ -1580,7 +1707,7 @@ void Scheduler::Impl::run_section(int section_id) {
               std::ranges::all_of(sec.async_cons, [this](auto v) { return node_eof_[v] != 0; }) &&
               std::ranges::all_of(sec.async_prod,
                                   [this](auto v) { return producer_closed_[v] != 0; })) {
-            finish_section();
+            finish_section(section_id);
             return;
           }
           break;

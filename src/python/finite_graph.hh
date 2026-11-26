@@ -6,6 +6,7 @@
 #include "array_collector.hh"
 #include "holoflow/core/graph_spec.hh"
 #include "holoflow/core/registry.hh"
+#include <algorithm>
 #include <boost/graph/topological_sort.hpp>
 #include <optional>
 #include <ranges>
@@ -53,6 +54,9 @@ inline core::GraphSpec prepare_finite_graph(core::GraphSpec spec, core::Registry
                                            "Pca",
                                            "PcaDecompositionQueue",
                                            "PcaProjection",
+                                           "PcaCovariance",
+                                           "SymmetricEigendecomposition",
+                                           "MultiReaderBatchQueue",
                                            "PctClip",
                                            "FresnelDiffraction",
                                            "Filter2D",
@@ -98,11 +102,20 @@ inline core::GraphSpec prepare_finite_graph(core::GraphSpec spec, core::Registry
       for (auto u : upstream)
         m.constant &= metadata[u].constant;
     }
+    const bool joins_independent_readers = std::ranges::any_of(
+        upstream, [&](auto u) { return spec[u].kind == "MultiReaderBatchQueue"; });
     for (auto u : upstream) {
-      if (!metadata[u].constant) {
+      if (metadata[u].constant)
+        continue;
+      if (!joins_independent_readers) {
         m.emissions = metadata[u].emissions;
         break;
       }
+      if (!metadata[u].emissions)
+        continue;
+      if (m.emissions && m.emissions != metadata[u].emissions)
+        throw std::invalid_argument("Changing input streams have unequal lengths on " + node.name);
+      m.emissions = metadata[u].emissions;
     }
     if (node.kind == "Holofile") {
       if (node.settings.value("loop", true))
@@ -111,7 +124,7 @@ inline core::GraphSpec prepare_finite_graph(core::GraphSpec spec, core::Registry
       const auto n = node.settings.at("end_frame").get<size_t>() -
                      node.settings.at("start_frame").get<size_t>();
       m.emissions  = n / node.settings.at("batch_size").get<size_t>();
-    } else if (node.kind == "BatchQueue" && m.emissions) {
+    } else if ((node.kind == "BatchQueue" || node.kind == "MultiReaderBatchQueue") && m.emissions) {
       m.emissions = checked_product(*m.emissions, inputs[0].shape[0]) /
                     node.settings.at("output_stride").get<size_t>();
     } else if (node.kind == "DualReaderBatchQueue" && m.emissions) {

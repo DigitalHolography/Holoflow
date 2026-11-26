@@ -473,6 +473,20 @@ void Compiler::Impl::run_type_inference() {
 
     const auto &factory = registry_.get(node.spec.kind);
     node.infer          = factory.infer(input_descs, node.spec.settings);
+    if (!node.infer.output_groups.empty()) {
+      std::vector<bool> seen(node.infer.output_descs.size());
+      for (const auto &group : node.infer.output_groups) {
+        if (group.empty())
+          throw CompilerException("Empty output group on " + node.spec.name);
+        for (const auto port : group) {
+          if (port >= seen.size() || seen[port])
+            throw CompilerException("Invalid output group port on " + node.spec.name);
+          seen[port] = true;
+        }
+      }
+      if (std::ranges::find(seen, false) != seen.end())
+        throw CompilerException("Missing output group port on " + node.spec.name);
+    }
 
     for (auto e : boost::make_iterator_range(boost::out_edges(v, g))) {
       auto &edge_plan = g[e];
@@ -635,6 +649,17 @@ void Compiler::Impl::verify_buffer_consistency() {
       }
     }
   }
+
+  std::set<size_t> read_only;
+  for (auto v : boost::make_iterator_range(boost::vertices(g)))
+    if (g[v].infer.read_only_outputs)
+      for (const auto tid : g[v].out_tids)
+        read_only.insert(res.tid_to_sid.at(tid));
+  for (auto v : boost::make_iterator_range(boost::vertices(g)))
+    for (const auto &alias : g[v].infer.in_place)
+      if (!alias.read_only_alias &&
+          read_only.contains(res.tid_to_sid.at(g[v].in_tids[alias.in_idx])))
+        throw CompilerException("Writable alias of a shared async output on " + g[v].spec.name);
 
   for (const auto &[sid, nodeList] : owners) {
     if (nodeList.size() > 1) {
@@ -840,8 +865,15 @@ void Compiler::Impl::allocate_buffers() {
 // Pass: Section Partitioning
 // -------------------------------------------------------------------------------------------------
 void Compiler::Impl::partition_sections() {
-  auto &g         = out_->graph;
-  auto  num_verts = boost::num_vertices(g);
+  auto      &g         = out_->graph;
+  auto       num_verts = boost::num_vertices(g);
+  const auto group_of  = [&](auto v, size_t port) -> size_t {
+    const auto &groups = g[v].infer.output_groups;
+    for (size_t group = 0; group < groups.size(); ++group)
+      if (std::ranges::find(groups[group], port) != groups[group].end())
+        return group;
+    return 0;
+  };
 
   for (auto e : boost::make_iterator_range(boost::edges(g))) {
     const auto source = boost::source(e, g);
@@ -893,16 +925,18 @@ void Compiler::Impl::partition_sections() {
           unite(sync_preds[0], sync_preds[i]);
       }
 
-      std::vector<size_t> sync_succs;
+      std::map<size_t, std::vector<size_t>> sync_succs;
       for (auto e : boost::make_iterator_range(boost::out_edges(v, g))) {
         auto s = boost::target(e, g);
         if (g[s].infer.kind == core::TaskKind::Sync)
-          sync_succs.push_back(s);
+          sync_succs[group_of(v, g[e].spec.out_idx)].push_back(s);
       }
-      if (!sync_succs.empty()) {
-        for (size_t i = 1; i < sync_succs.size(); ++i)
-          unite(sync_succs[0], sync_succs[i]);
-      }
+      if (g[v].infer.output_groups.size() > 1 &&
+          sync_succs.size() != g[v].infer.output_groups.size())
+        throw CompilerException("Unconnected output group on " + g[v].spec.name);
+      for (const auto &[group, successors] : sync_succs)
+        for (size_t i = 1; i < successors.size(); ++i)
+          unite(successors[0], successors[i]);
     }
   }
 
@@ -943,15 +977,18 @@ void Compiler::Impl::partition_sections() {
     if (g[v].infer.kind != core::TaskKind::Async)
       continue;
 
-    std::set<size_t> unique_cons_sections;
+    std::set<std::pair<size_t, size_t>> unique_cons_sections;
     for (auto e : boost::make_iterator_range(boost::out_edges(v, g))) {
       auto s = boost::target(e, g);
       if (g[s].infer.kind == core::TaskKind::Sync) {
-        unique_cons_sections.insert(get_section_id(s));
+        unique_cons_sections.emplace(get_section_id(s), group_of(v, g[e].spec.out_idx));
       }
     }
-    for (size_t sec_id : unique_cons_sections) {
-      out_->sections[sec_id].async_cons.push_back(v);
+    for (auto [sec_id, group] : unique_cons_sections) {
+      auto &section = out_->sections[sec_id];
+      section.async_cons.push_back(v);
+      section.async_cons_groups.push_back(group);
+      section.requires_reservations |= g[v].infer.output_groups.size() > 1;
     }
 
     std::set<size_t> unique_prod_sections;
@@ -963,6 +1000,30 @@ void Compiler::Impl::partition_sections() {
     }
     for (size_t sec_id : unique_prod_sections) {
       out_->sections[sec_id].async_prod.push_back(v);
+    }
+  }
+
+  std::map<GraphPlan::vertex_descriptor, size_t> producer_sections;
+  for (const auto &section : out_->sections)
+    for (auto v : section.async_prod)
+      producer_sections.emplace(v, section.id);
+  std::vector<std::vector<size_t>> successors(out_->sections.size());
+  for (const auto &section : out_->sections)
+    for (auto v : section.async_cons)
+      if (auto producer = producer_sections.find(v); producer != producer_sections.end())
+        successors[producer->second].push_back(section.id);
+  for (const auto &section : out_->sections) {
+    if (!section.requires_reservations)
+      continue;
+    std::set<size_t> reachable;
+    auto             pending = successors[section.id];
+    while (!pending.empty()) {
+      const auto next = pending.back();
+      pending.pop_back();
+      if (next == section.id)
+        throw CompilerException("Cyclic section dependency at " + section.name);
+      if (reachable.insert(next).second)
+        pending.insert(pending.end(), successors[next].begin(), successors[next].end());
     }
   }
 
@@ -982,16 +1043,24 @@ void Compiler::Impl::partition_sections() {
     for (auto v : section.async_prod)
       if (!g[v].infer.supports_prequeued_push)
         block_prequeue(g[v].spec.name + " does not support prequeued pushes");
-    for (auto v : section.async_cons) {
+    for (auto v : section.async_cons)
       if (!g[v].infer.supports_prequeued_pop)
-        block_prequeue(g[v].spec.name + " does not support prequeued pops");
-      for (auto edge : boost::make_iterator_range(boost::out_edges(v, g)))
-        if (!g[v].infer.owned_outputs.at(g[edge].spec.out_idx))
-          block_prequeue(g[v].spec.name + " has a connected non-owned output");
-    }
+        block_prequeue(g[v].spec.name + " does not support reserved pops");
     for (auto v : section.sync_topo)
       if (std::ranges::any_of(g[v].infer.owned_inputs, [](bool owned) { return owned; }))
         block_prequeue(g[v].spec.name + " requires synchronous input acquisition");
+    if (section.requires_reservations && !section.supports_prequeue)
+      throw CompilerException(section.name + " requires rollback-capable boundaries: " +
+                              section.prequeue_fallback_reason);
+
+    for (size_t i = 0; i < section.async_cons.size(); ++i) {
+      const auto v = section.async_cons[i];
+      for (auto edge : boost::make_iterator_range(boost::out_edges(v, g))) {
+        const auto port = g[edge].spec.out_idx;
+        if (group_of(v, port) == section.async_cons_groups[i] && !g[v].infer.owned_outputs.at(port))
+          block_prequeue(g[v].spec.name + " has a connected non-owned output");
+      }
+    }
   }
 }
 
@@ -1080,11 +1149,9 @@ Compiler::Impl::create_or_update_task(Factory &factory, const NodePlan &np, cons
       } else {
         logger_->warn("AsyncCreateCtx has null producer_stream; skipping synchronization.");
       }
-      if (ctx.consumer_stream) {
-        CUDA_CHECK(cudaStreamSynchronize(ctx.consumer_stream));
-      } else {
-        logger_->warn("AsyncCreateCtx has null consumer_stream; skipping synchronization.");
-      }
+      for (const auto stream : ctx.consumer_streams)
+        if (stream)
+          CUDA_CHECK(cudaStreamSynchronize(stream));
     }
   };
 
@@ -1217,6 +1284,7 @@ nlohmann::json section_structure(const CompilerOutput &output, const Section &se
     }
     result.push_back(std::move(tasks));
   }
+  result.push_back(section.async_cons_groups);
   std::set<std::tuple<std::string, int, std::string, int>> wiring;
   for (auto edge : boost::make_iterator_range(boost::edges(output.graph))) {
     const auto &source = output.graph[boost::source(edge, output.graph)].spec.name;
@@ -1347,18 +1415,15 @@ void Compiler::Impl::instantiate_tasks() {
         }
       }
 
-      void *cons_stream = nullptr;
-      for (auto e : boost::make_iterator_range(boost::out_edges(v, g))) {
-        auto s = boost::target(e, g);
-        if (g[s].infer.kind == core::TaskKind::Sync) {
-          size_t sid  = node_to_section_map_.at(g[s].spec.name);
-          cons_stream = out_->resources.streams.at(sid).get();
-          break;
-        }
-      }
-
-      core::AsyncCreateCtx ctx{.producer_stream = static_cast<cudaStream_t>(prod_stream),
-                               .consumer_stream = static_cast<cudaStream_t>(cons_stream)};
+      std::vector<cudaStream_t> consumer_streams(
+          (std::max)(size_t{1}, np.infer.output_groups.size()), nullptr);
+      for (const auto &section : out_->sections)
+        for (size_t i = 0; i < section.async_cons.size(); ++i)
+          if (section.async_cons[i] == v)
+            consumer_streams[section.async_cons_groups[i]] = section.stream;
+      core::AsyncCreateCtx ctx{.producer_stream  = static_cast<cudaStream_t>(prod_stream),
+                               .consumer_stream  = consumer_streams[0],
+                               .consumer_streams = consumer_streams};
 
       auto &factory = registry_.get_async(np.spec.kind);
 

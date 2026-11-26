@@ -9,7 +9,7 @@ from .aberration import correct_aberration
 from .postprocessing import postprocess_image
 from .propagation import fresnel_diffraction, reconstruct_image, spatial_filter
 from .queues import output_queue, propagation_queue
-from .temporal import process_temporal_windows
+from .temporal import pipelined_pca, process_temporal_windows
 
 
 def pipeline(config):
@@ -33,16 +33,18 @@ def pipeline(config):
     frames = hf.throughput(frames, interval_ms=interval_ms, node_id="input_fps")
     # A cached GPU source owns its output, while BatchQueue owns its input.
     frames = hf.copy(frames) if frames.device == "device" else frames.to("device")
-    frames = hf.batch_queue(
-        frames,
-        config.queues["input_frames"],
-        temporal_frames,
-        temporal_frames,
-        node_id="uploaded_frames",
-    )
-
     precision = config.time.get("precision", "fp32")
-    field = process_temporal_windows(frames, temporal_frames, config.time, precision=precision)
+    if config.time["method"] == "pca" and precision == "fp16":
+        field = pipelined_pca(frames, temporal_frames, config.queues["input_frames"], config.time)
+    else:
+        frames = hf.batch_queue(
+            frames,
+            config.queues["input_frames"],
+            temporal_frames,
+            temporal_frames,
+            node_id="uploaded_frames",
+        )
+        field = process_temporal_windows(frames, temporal_frames, config.time, precision=precision)
     if config.spatial_filter["enabled"]:
         field = spatial_filter(field, config.spatial_filter, precision=precision)
 

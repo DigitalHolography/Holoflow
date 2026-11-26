@@ -437,6 +437,72 @@ private:
   curaii::CublasHandle cublas_;
 };
 
+class PcaCovarianceTask final : public holoflow::core::ISyncTask {
+public:
+  PcaCovarianceTask(const holoflow::core::TDesc &input, cudaStream_t stream)
+      : layout_(input), scratch_(layout_.dtype == holoflow::core::DType::U8
+                                     ? curaii::make_unique_device_ptr<float>(
+                                           layout_.batches * (layout_.samples / 512) * 1024)
+                                     : curaii::unique_device_ptr<float>{}) {
+    CUBLAS_CHECK(cublasSetStream(cublas_.get(), stream));
+  }
+
+  bool supports_cuda_graph() const noexcept override { return true; }
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    enqueue(ctx.inputs[0], ctx.outputs[0]);
+  }
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    enqueue(ctx.inputs[0], ctx.outputs[0]);
+    return holoflow::core::OpResult::Ok;
+  }
+
+private:
+  void enqueue(holoflow::core::TView input, holoflow::core::TView output) {
+    enqueue_pca_covariance(cublas_.get(), layout_, input.data(),
+                           reinterpret_cast<float *>(output.data()), scratch_.get());
+  }
+
+  PcaLayout                        layout_;
+  curaii::unique_device_ptr<float> scratch_;
+  curaii::CublasHandle             cublas_;
+};
+
+class SymmetricEigendecompositionTask final : public holoflow::core::ISyncTask {
+public:
+  SymmetricEigendecompositionTask(const holoflow::core::TDesc &input, cudaStream_t stream)
+      : layout_(holoflow::core::TDesc({input.shape[0], input.shape[1], 1, 1}, input.dtype,
+                                      input.mem_loc)),
+        stream_(stream), workspace_(layout_),
+        solver_(make_eigensolver(layout_, workspace_, stream)) {}
+
+  bool supports_cuda_graph() const noexcept override { return true; }
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    enqueue(ctx.inputs[0], ctx.outputs[0]);
+  }
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    enqueue(ctx.inputs[0], ctx.outputs[0]);
+    return holoflow::core::OpResult::Ok;
+  }
+
+private:
+  void enqueue(holoflow::core::TView input, holoflow::core::TView output) {
+    nvtx3::scoped_range range("PCA eigendecomposition");
+    auto               *vectors = reinterpret_cast<float *>(output.data());
+    // The conventional solver's singleton path needs a second writable matrix.
+    auto      *matrices = layout_.batches == 1 ? workspace_.matrices.get() : vectors;
+    const auto bytes    = output.desc.num_bytes();
+    CUDA_CHECK(cudaMemcpyAsync(matrices, input.data(), bytes, cudaMemcpyDeviceToDevice, stream_));
+    solver_->solve(matrices, workspace_.eigenvalues.get(), workspace_.solver_info.get(), stream_);
+    if (matrices != vectors)
+      CUDA_CHECK(cudaMemcpyAsync(vectors, matrices, bytes, cudaMemcpyDeviceToDevice, stream_));
+  }
+
+  PcaLayout                    layout_;
+  cudaStream_t                 stream_;
+  PcaWorkspace                 workspace_;
+  std::unique_ptr<Eigensolver> solver_;
+};
+
 class PcaEvent {
 public:
   PcaEvent() { CUDA_CHECK(cudaEventCreateWithFlags(&event_, cudaEventDisableTiming)); }
@@ -1379,6 +1445,61 @@ void from_json(const nlohmann::json &j, PcaSettings &settings) {
 // -------------------------------------------------------------------------------------------------
 // Factory methods
 // -------------------------------------------------------------------------------------------------
+
+holoflow::core::InferResult
+PcaCovarianceFactory::infer(std::span<const holoflow::core::TDesc> inputs,
+                            const nlohmann::json &) const {
+  using namespace holoflow::core;
+  if (inputs.size() != 1 || inputs[0].rank() != 4)
+    throw std::invalid_argument("PCA covariance requires [B,T,H,W]");
+  const auto &x     = inputs[0];
+  const auto &shape = x.shape;
+  const bool  fused = x.dtype == DType::U8 && shape[1] == 32 && shape[2] == 320 && shape[3] == 512;
+  if ((!fused && x.dtype != DType::F32) || x.mem_loc != MemLoc::Device ||
+      std::ranges::find(shape, 0) != shape.end() ||
+      x.strides != TDesc(shape, x.dtype, x.mem_loc).strides)
+    throw std::invalid_argument("Unsupported PCA covariance input");
+  TDesc out({shape[0], shape[1], shape[1]}, DType::F32, MemLoc::Device);
+  return {.input_descs   = {x},
+          .output_descs  = {out},
+          .owned_inputs  = {false},
+          .owned_outputs = {false},
+          .kind          = TaskKind::Sync};
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+PcaCovarianceFactory::create(std::span<const holoflow::core::TDesc> inputs,
+                             const nlohmann::json                  &settings,
+                             const holoflow::core::SyncCreateCtx   &ctx) const {
+  (void)infer(inputs, settings);
+  return std::make_unique<PcaCovarianceTask>(inputs[0], ctx.stream);
+}
+
+holoflow::core::InferResult
+SymmetricEigendecompositionFactory::infer(std::span<const holoflow::core::TDesc> inputs,
+                                          const nlohmann::json &) const {
+  using namespace holoflow::core;
+  if (inputs.size() != 1)
+    throw std::invalid_argument("Eigendecomposition requires one input");
+  const auto &c = inputs[0];
+  const TDesc out(c.shape, DType::F32, MemLoc::Device);
+  if (c.rank() != 3 || !c.shape[0] || !c.shape[1] || c.shape[1] != c.shape[2] ||
+      c.dtype != out.dtype || c.mem_loc != out.mem_loc || c.strides != out.strides)
+    throw std::invalid_argument("Eigendecomposition requires contiguous device FP32 [B,T,T]");
+  return {.input_descs   = {c},
+          .output_descs  = {out},
+          .owned_inputs  = {false},
+          .owned_outputs = {false},
+          .kind          = TaskKind::Sync};
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+SymmetricEigendecompositionFactory::create(std::span<const holoflow::core::TDesc> inputs,
+                                           const nlohmann::json                  &settings,
+                                           const holoflow::core::SyncCreateCtx   &ctx) const {
+  (void)infer(inputs, settings);
+  return std::make_unique<SymmetricEigendecompositionTask>(inputs[0], ctx.stream);
+}
 
 holoflow::core::InferResult
 PcaProjectionFactory::infer(std::span<const holoflow::core::TDesc> input_descs,

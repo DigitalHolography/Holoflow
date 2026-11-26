@@ -116,7 +116,7 @@ AsContiguousArrayFactory::infer(std::span<const holoflow::core::TDesc> input_des
   if (!utils::is_c_contiguous(idesc)) {
     odesc = holoflow::core::TDesc(idesc.shape, idesc.dtype, idesc.mem_loc);
   } else {
-    in_place = {{0, 0}};
+    in_place = {{0, 0, true}};
   }
 
   return {

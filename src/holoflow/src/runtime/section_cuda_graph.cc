@@ -59,6 +59,7 @@ struct StorageOwner {
   PortDirection         direction;
   std::optional<size_t> pointer_count;
   std::string           error;
+  std::optional<size_t> output_group;
 
   [[nodiscard]] std::optional<core::PointerSequence> pointer_sequence() const {
     return is_input() ? task->owned_input_pointer_sequence(port)
@@ -539,6 +540,10 @@ void collect_owned_ports(GraphContext &context, const NodePlan &node, PortDirect
     const auto   error         = malformed_counts ? "Pointer count vector has wrong size" : "";
     auto        *task          = context.resources.tasks.at(node.spec.name).get();
     StorageOwner owner{task, node.spec.name, port, direction, pointer_count, error};
+    if (!input)
+      for (size_t group = 0; group < infer.output_groups.size(); ++group)
+        if (std::ranges::find(infer.output_groups[group], port) != infer.output_groups[group].end())
+          owner.output_group = group;
     owners.emplace(storage_id, std::move(owner));
   }
 }
@@ -705,6 +710,8 @@ void inspect_domain_owner(StorageDomain &domain, const StorageOwner *owner, Sect
     domain_report["owner"]     = owner->task_name;
     domain_report["port"]      = owner->port;
     domain_report["direction"] = owner->is_input() ? "input" : "output";
+    if (owner->output_group)
+      domain_report["output_group"] = *owner->output_group;
 
     try {
       if (!owner->error.empty())

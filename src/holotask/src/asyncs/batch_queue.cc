@@ -14,8 +14,11 @@
 
 #include "holotask/asyncs/batch_queue.hh"
 
+#include <algorithm>
 #include <atomic>
+#include <climits>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -43,10 +46,13 @@ void to_json(nlohmann::json &j, const BatchQueueSettings &bqs) {
       {"output_size", bqs.output_size},
       {"output_stride", bqs.output_stride},
   };
+  if (bqs.reader_count != 1)
+    j["reader_count"] = bqs.reader_count;
 }
 
 void from_json(const nlohmann::json &j, BatchQueueSettings &bqs) {
-  bqs.tail = j.value("tail", std::string{"error"});
+  bqs.reader_count = j.value("reader_count", size_t{1});
+  bqs.tail         = j.value("tail", std::string{"error"});
   j.at("target_capacity").get_to(bqs.target_capacity);
   j.at("output_size").get_to(bqs.output_size);
   j.at("output_stride").get_to(bqs.output_stride);
@@ -61,7 +67,7 @@ public:
              size_t input_size, size_t element_size)
       : settings_(std::move(settings)), idesc_(std::move(idesc)), odesc_(std::move(odesc)),
         h_buf_(std::move(h_buf)), d_buf_(std::move(d_buf)), buf_(buf), nb_slots_(nb_slots),
-        input_size_(input_size), element_size_(element_size) {}
+        input_size_(input_size), element_size_(element_size), readers_(settings_.reader_count) {}
 
   std::optional<holoflow::core::TView> acquire_input(int index) override;
   void                                 release_output(int index) override;
@@ -75,7 +81,13 @@ public:
   holoflow::core::OpResult             reserve_pop(holoflow::core::AsyncPopCtx &,
                                                    holoflow::core::AsyncTicket &) override;
   void                                 release_pop(holoflow::core::AsyncTicket ticket) override;
-  void cancel_pop(holoflow::core::AsyncTicket ticket) override { pending_reads_.cancel(ticket); }
+  void cancel_pop(holoflow::core::AsyncTicket ticket) override { cancel_output_group(0, ticket); }
+  holoflow::core::OpResult reserve_output_group(size_t, holoflow::core::AsyncPopCtx &,
+                                                holoflow::core::AsyncTicket &) override;
+  void                     release_output_group(size_t, holoflow::core::AsyncTicket) override;
+  void cancel_output_group(size_t group, holoflow::core::AsyncTicket ticket) override {
+    readers_.at(group).pending.cancel(ticket);
+  }
 
   void close_input() override { closed_.store(true, std::memory_order_release); }
 
@@ -89,7 +101,7 @@ public:
   }
 
   std::optional<std::vector<std::byte *>> owned_output_pointers(size_t index) const override {
-    if (index != 0)
+    if (index >= readers_.size())
       throw std::out_of_range("BatchQueue output port");
     std::vector<std::byte *> pointers;
     for (size_t i = 0; i < nb_slots_; i += settings_.output_stride)
@@ -107,9 +119,10 @@ public:
   }
   std::optional<holoflow::core::PointerSequence>
   owned_output_pointer_sequence(size_t index) const override {
-    if (index != 0)
+    if (index >= readers_.size())
       throw std::out_of_range("BatchQueue output port");
-    return sequence(read_idx_.load(std::memory_order_relaxed) / settings_.output_stride,
+    return sequence(readers_[index].committed.load(std::memory_order_relaxed) /
+                        settings_.output_stride,
                     nb_slots_ / settings_.output_stride);
   }
   size_t             nb_slots() const { return nb_slots_; }
@@ -131,7 +144,7 @@ private:
   }
   std::atomic<bool> closed_{false};
   size_t            writer_size() const;
-  size_t            reader_size() const;
+  size_t            used_capacity(size_t write) const;
 
   BatchQueueSettings    settings_;
   holoflow::core::TDesc idesc_;
@@ -143,13 +156,16 @@ private:
   size_t                input_size_;
   size_t                element_size_;
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> write_idx_;
-  alignas(CACHE_LINE_SIZE) std::atomic<size_t> read_idx_;
+  struct alignas(CACHE_LINE_SIZE) Reader {
+    std::atomic<size_t>              committed{0};
+    detail::ReservationQueue<size_t> pending;
+  };
   struct PendingWrite {
     size_t next;
     bool   submitted = false;
   };
   alignas(CACHE_LINE_SIZE) detail::ReservationQueue<PendingWrite> pending_writes_;
-  alignas(CACHE_LINE_SIZE) detail::ReservationQueue<size_t> pending_reads_;
+  std::vector<Reader> readers_;
 };
 
 holoflow::core::OpResult BatchQueue::reserve_push(holoflow::core::AsyncPushCtx &ctx,
@@ -161,8 +177,7 @@ holoflow::core::OpResult BatchQueue::reserve_push(holoflow::core::AsyncPushCtx &
     return OpResult::NotReady;
   const size_t write = pending_writes_.empty() ? write_idx_.load(std::memory_order_relaxed)
                                                : pending_writes_.back().next;
-  const size_t read  = read_idx_.load(std::memory_order_acquire);
-  const size_t used  = (write + nb_slots_ - read) % nb_slots_;
+  const size_t used  = used_capacity(write);
   if (nb_slots_ - used <= input_size_)
     return OpResult::NotReady;
   storage_access().owned_input_storage(0).ptr = buf_ + write * element_size_;
@@ -191,25 +206,46 @@ void BatchQueue::cancel_push(holoflow::core::AsyncTicket ticket) {
 
 holoflow::core::OpResult BatchQueue::reserve_pop(holoflow::core::AsyncPopCtx &ctx,
                                                  holoflow::core::AsyncTicket &ticket) {
+  if (readers_.size() != 1)
+    throw std::logic_error("MultiReaderBatchQueue requires a group-specific pop");
+  return reserve_output_group(0, ctx, ticket);
+}
+
+holoflow::core::OpResult BatchQueue::reserve_output_group(size_t                       group,
+                                                          holoflow::core::AsyncPopCtx &ctx,
+                                                          holoflow::core::AsyncTicket &ticket) {
   using holoflow::core::OpResult;
   if (ctx.cancelled && ctx.cancelled->load())
     return OpResult::Cancelled;
-  if (pending_reads_.full())
+  auto &reader = readers_.at(group);
+  if (reader.pending.full())
     return OpResult::NotReady;
-  const size_t read =
-      pending_reads_.empty() ? read_idx_.load(std::memory_order_relaxed) : pending_reads_.back();
-  const size_t write = write_idx_.load(std::memory_order_acquire);
-  if ((write + nb_slots_ - read) % nb_slots_ < static_cast<size_t>(settings_.output_stride))
-    return OpResult::NotReady;
-  auto &storage  = storage_access().owned_output_storage(0);
+  const bool   closed    = closed_.load(std::memory_order_acquire);
+  const size_t read      = reader.pending.empty() ? reader.committed.load(std::memory_order_relaxed)
+                                                  : reader.pending.back();
+  const size_t write     = write_idx_.load(std::memory_order_acquire);
+  const size_t remaining = (write + nb_slots_ - read) % nb_slots_;
+  if (remaining < static_cast<size_t>(settings_.output_stride)) {
+    if (!closed)
+      return OpResult::NotReady;
+    if (remaining && settings_.tail == "error")
+      throw std::runtime_error("Incomplete final BatchQueue stride group");
+    return OpResult::Eof;
+  }
+  auto &storage  = storage_access().owned_output_storage(group);
   storage.ptr    = buf_ + read * element_size_;
   ctx.outputs[0] = {odesc_, &storage};
-  ticket         = pending_reads_.push((read + settings_.output_stride) % nb_slots_);
+  ticket         = reader.pending.push((read + settings_.output_stride) % nb_slots_);
   return OpResult::Ok;
 }
 
 void BatchQueue::release_pop(holoflow::core::AsyncTicket ticket) {
-  read_idx_.store(pending_reads_.pop(ticket), std::memory_order_release);
+  release_output_group(0, ticket);
+}
+
+void BatchQueue::release_output_group(size_t group, holoflow::core::AsyncTicket ticket) {
+  auto &reader = readers_.at(group);
+  reader.committed.store(reader.pending.pop(ticket), std::memory_order_release);
 }
 
 std::optional<holoflow::core::TView> BatchQueue::acquire_input(int index) {
@@ -237,14 +273,14 @@ void BatchQueue::release_output(int index) {
     throw std::out_of_range("BatchQueue::release_output: invalid index");
   }
 
-  size_t read_idx      = read_idx_.load(std::memory_order_relaxed);
+  size_t read_idx      = readers_[0].committed.load(std::memory_order_relaxed);
   size_t next_read_idx = read_idx + settings_.output_stride;
   if (next_read_idx == nb_slots_) {
     next_read_idx = 0;
   }
   auto &storage = storage_access().owned_output_storage(0);
   storage.ptr   = nullptr;
-  read_idx_.store(next_read_idx, std::memory_order_release);
+  readers_[0].committed.store(next_read_idx, std::memory_order_release);
 }
 
 holoflow::core::OpResult BatchQueue::try_push(holoflow::core::AsyncPushCtx &) {
@@ -260,54 +296,44 @@ holoflow::core::OpResult BatchQueue::try_push(holoflow::core::AsyncPushCtx &) {
 }
 
 holoflow::core::OpResult BatchQueue::try_pop(holoflow::core::AsyncPopCtx &ctx) {
-  const bool closed    = closed_.load(std::memory_order_acquire);
-  const auto remaining = reader_size();
-  if (remaining < static_cast<size_t>(settings_.output_stride)) {
-    if (closed) {
-      if (remaining && settings_.tail == "error")
-        throw std::runtime_error("Incomplete final BatchQueue stride group");
-      return holoflow::core::OpResult::Eof;
-    }
-    return holoflow::core::OpResult::NotReady;
-  }
-
-  size_t     read_idx = read_idx_.load(std::memory_order_relaxed);
-  std::byte *data     = buf_ + read_idx * element_size_;
-  auto      &storage  = storage_access().owned_output_storage(0);
-  storage.ptr         = data;
-
-  ctx.outputs[0] = holoflow::core::TView{
-      .desc    = odesc_,
-      .storage = &storage,
-  };
-  return holoflow::core::OpResult::Ok;
+  holoflow::core::AsyncTicket ticket;
+  const auto                  result = reserve_pop(ctx, ticket);
+  if (result == holoflow::core::OpResult::Ok)
+    cancel_pop(ticket); // The legacy release advances the committed cursor directly.
+  return result;
 }
 
 size_t BatchQueue::writer_size() const {
-  size_t write_idx = write_idx_.load(std::memory_order_relaxed);
-  size_t read_idx  = read_idx_.load(std::memory_order_acquire);
-  size_t diff      = write_idx - read_idx;
-  if (write_idx < read_idx) {
-    diff += nb_slots_;
-  }
-  return diff;
+  return used_capacity(write_idx_.load(std::memory_order_relaxed));
 }
 
-size_t BatchQueue::reader_size() const {
-  size_t write_idx = write_idx_.load(std::memory_order_acquire);
-  size_t read_idx  = read_idx_.load(std::memory_order_relaxed);
-  size_t diff      = write_idx - read_idx;
-  if (write_idx < read_idx) {
-    diff += nb_slots_;
+size_t BatchQueue::used_capacity(size_t write) const {
+  size_t used = 0;
+  for (const auto &reader : readers_) {
+    const size_t read     = reader.committed.load(std::memory_order_acquire);
+    const size_t distance = write >= read ? write - read : nb_slots_ - (read - write);
+    used                  = (std::max)(used, distance);
   }
-  return diff;
+  return used;
 }
 
-int lcm_above(int x, int y, int k) {
-  auto base = std::lcm(x, y);
-  HOLOVIBES_CHECK(base > 0, "lcm_above: lcm overflow");
-  auto mult = (k + base - 1) / base;
-  return base * mult;
+size_t slot_count(size_t input, size_t stride, size_t target) {
+  const size_t gcd   = std::gcd(input, stride);
+  const size_t limit = (std::numeric_limits<size_t>::max)();
+  if (input > limit / (stride / gcd) || target > limit - input || stride - gcd >= limit - input)
+    throw std::overflow_error("BatchQueue capacity overflow");
+  const size_t alignment = input * (stride / gcd);
+  const size_t minimum   = (std::max)(target + input, input + stride - gcd + 1);
+  const size_t blocks    = (minimum - 1) / alignment + 1;
+  if (blocks > limit / alignment || blocks * alignment > limit / 2)
+    throw std::overflow_error("BatchQueue capacity overflow");
+  return blocks * alignment;
+}
+
+size_t allocation_bytes(size_t slots, const holoflow::core::TDesc &desc) {
+  if (desc.strides[0] > ((std::numeric_limits<size_t>::max)() - desc.offset) / slots)
+    throw std::overflow_error("BatchQueue allocation size overflow");
+  return slots * desc.strides[0] + desc.offset;
 }
 
 bool is_contiguous(const holoflow::core::TDesc &desc) {
@@ -335,6 +361,7 @@ BatchQueueFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(input_descs[0].rank() > 0, "BatchQueue task input must have rank > 0");
   check(input_descs[0].shape[0] > 0, "BatchQueue task input batch must be positive");
   check(is_contiguous(input_descs[0]), "BatchQueue task input must be contiguous");
+  check(settings.reader_count > 0 && settings.reader_count <= INT_MAX, "invalid reader count");
   check(settings.target_capacity > 0, "BatchQueue task target capacity must be > 0");
   check(settings.output_size > 0, "BatchQueue task output size must be > 0");
   check(settings.output_stride > 0, "BatchQueue task output stride must be > 0");
@@ -342,22 +369,29 @@ BatchQueueFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(is_factor, "BatchQueue task output stride must be a multiple of output size");
 
   // Success
-  auto odesc       = input_descs[0];
-  odesc.shape[0]   = settings.output_size;
-  const auto slots = static_cast<size_t>(
-      lcm_above(static_cast<int>(input_descs[0].shape[0]), settings.output_stride,
-                settings.target_capacity + static_cast<int>(input_descs[0].shape[0])));
+  auto odesc     = input_descs[0];
+  odesc.shape[0] = settings.output_size;
+  const auto slots =
+      slot_count(input_descs[0].shape[0], settings.output_stride, settings.target_capacity);
+  std::vector<std::vector<size_t>> groups;
+  if (settings.reader_count > 1)
+    for (size_t reader = 0; reader < settings.reader_count; ++reader)
+      groups.push_back({reader});
   return holoflow::core::InferResult{
-      .input_descs                 = {input_descs[0]},
-      .output_descs                = {odesc},
-      .in_place                    = {},
-      .owned_inputs                = {true},
-      .owned_outputs               = {true},
-      .kind                        = holoflow::core::TaskKind::Async,
-      .owned_input_pointer_counts  = {slots / input_descs[0].shape[0]},
-      .owned_output_pointer_counts = {slots / settings.output_stride},
-      .supports_prequeued_push     = true,
-      .supports_prequeued_pop      = true,
+      .input_descs                = {input_descs[0]},
+      .output_descs               = std::vector(settings.reader_count, odesc),
+      .in_place                   = {},
+      .owned_inputs               = {true},
+      .owned_outputs              = std::vector<bool>(settings.reader_count, true),
+      .kind                       = holoflow::core::TaskKind::Async,
+      .owned_input_pointer_counts = {slots / input_descs[0].shape[0]},
+      .owned_output_pointer_counts =
+          std::vector<std::optional<size_t>>(settings.reader_count, slots / settings.output_stride),
+      .supports_prequeued_push = true,
+      .supports_prequeued_pop  = true,
+      .output_groups           = std::move(groups),
+      .read_only_outputs       = settings.reader_count > 1,
+      .reserved_pop_eof        = true,
   };
 }
 
@@ -368,19 +402,10 @@ BatchQueueFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   auto infer    = this->infer(input_descs, jsettings);
   auto settings = jsettings.get<BatchQueueSettings>();
 
-  // Compute n_slots such that:
-  // - nb_slots >= target_capacity
-  // - nb_slots % stride == 0
-  // - nb_slots % input_descs[0].shape[0] == 0
-  int x        = static_cast<int>(input_descs[0].shape[0]);
-  int y        = settings.output_stride;
-  int k        = settings.target_capacity + x;
-  int nb_slots = lcm_above(x, y, k);
-
-  // Setup buffers
-  size_t input_size   = static_cast<int>(input_descs[0].shape[0]);
-  size_t element_size = static_cast<int>(input_descs[0].num_bytes() / input_size);
-  size_t bytes        = nb_slots * element_size;
+  const size_t input_size   = input_descs[0].shape[0];
+  const size_t element_size = input_descs[0].strides[0];
+  const size_t nb_slots = slot_count(input_size, settings.output_stride, settings.target_capacity);
+  const size_t bytes    = allocation_bytes(nb_slots, input_descs[0]);
 
   logger()->debug(
       "[BatchQueueFactory::create] Creating BatchQueue with {} slots, capacity={}, input_size={}, "
@@ -423,16 +448,12 @@ BatchQueueFactory::update(std::unique_ptr<holoflow::core::IAsyncTask> old_task,
     return create(input_descs, jsettings, ctx);
   }
 
-  // Update
-  int    x            = static_cast<int>(input_descs[0].shape[0]);
-  int    y            = settings.output_stride;
-  int    k            = settings.target_capacity + x;
-  int    nb_slots     = lcm_above(x, y, k);
-  size_t input_size   = static_cast<int>(input_descs[0].shape[0]);
-  size_t element_size = static_cast<int>(input_descs[0].num_bytes() / input_size);
-  size_t bytes        = nb_slots * element_size;
-  bool   same_buffer  = (bytes == old_bq->nb_slots() * old_bq->element_size()) &&
-                        (input_descs[0].mem_loc == old_bq->idesc().mem_loc);
+  const size_t input_size   = input_descs[0].shape[0];
+  const size_t element_size = input_descs[0].strides[0];
+  const size_t nb_slots = slot_count(input_size, settings.output_stride, settings.target_capacity);
+  const size_t bytes    = allocation_bytes(nb_slots, input_descs[0]);
+  const bool   same_buffer = bytes == allocation_bytes(old_bq->nb_slots(), old_bq->idesc()) &&
+                             input_descs[0].mem_loc == old_bq->idesc().mem_loc;
 
   if (same_buffer) {
     logger()->debug("[BatchQueueFactory::update] Reusing existing BatchQueue task");

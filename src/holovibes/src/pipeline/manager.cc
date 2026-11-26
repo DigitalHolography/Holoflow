@@ -238,6 +238,9 @@ Manager::Manager(
 }
 
 void Manager::register_components() {
+  reg_sync<syncs::PcaCovarianceFactory>(registry_, "PcaCovariance");
+  reg_sync<syncs::SymmetricEigendecompositionFactory>(registry_, "SymmetricEigendecomposition");
+  reg_async<asyncs::MultiReaderBatchQueueFactory>(registry_, "MultiReaderBatchQueue");
   reg_async<asyncs::BatchQueueFactory>(registry_, "BatchQueue");
   reg_async<asyncs::DualReaderBatchQueueFactory>(registry_, "DualReaderBatchQueue");
   reg_async<asyncs::PcaDecompositionQueueFactory>(registry_, "PcaDecompositionQueue");

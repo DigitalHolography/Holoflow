@@ -73,6 +73,24 @@ OpResult IAsyncTask::reserve_pop(AsyncPopCtx &, AsyncTicket &) {
 void IAsyncTask::release_pop(AsyncTicket) {
   throw std::logic_error("Task does not support prequeued pops");
 }
+OpResult IAsyncTask::reserve_output_group(size_t group, AsyncPopCtx &ctx, AsyncTicket &ticket) {
+  if (group != 0)
+    throw std::out_of_range("Unknown async output group");
+  return reserve_pop(ctx, ticket);
+}
+
+void IAsyncTask::release_output_group(size_t group, AsyncTicket ticket) {
+  if (group != 0)
+    throw std::out_of_range("Unknown async output group");
+  release_pop(ticket);
+}
+
+void IAsyncTask::cancel_output_group(size_t group, AsyncTicket ticket) {
+  if (group != 0)
+    throw std::out_of_range("Unknown async output group");
+  cancel_pop(ticket);
+}
+
 void IAsyncTask::cancel_pop(AsyncTicket) {
   throw std::logic_error("Task does not support prequeued pops");
 }

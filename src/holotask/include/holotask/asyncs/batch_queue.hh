@@ -32,6 +32,8 @@ struct BatchQueueSettings {
 
   std::string tail = "error"; ///< Incomplete final stride group: error or drop.
 
+  size_t reader_count = 1; ///< Number of independent readers.
+
   bool operator==(const BatchQueueSettings &) const = default;
 };
 
@@ -60,5 +62,7 @@ public:
          std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::AsyncCreateCtx &ctx) const override;
 };
+
+using MultiReaderBatchQueueFactory = BatchQueueFactory;
 
 } // namespace holotask::asyncs

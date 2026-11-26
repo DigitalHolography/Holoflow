@@ -27,6 +27,23 @@ def batch_queue(x: Tensor, target_capacity: int, output_size: int,
     }, node_id)
 
 
+def multi_reader_batch_queue(x, target_capacity, output_size, output_stride, reader_count,
+                             *, tail="error", node_id=None):
+    readers = operation("MultiReaderBatchQueue", (x,), {
+        "target_capacity": target_capacity, "output_size": output_size,
+        "output_stride": output_stride, "reader_count": reader_count, "tail": tail,
+    }, node_id)
+    return readers if isinstance(readers, tuple) else (readers,)
+
+
+def pca_covariance(x, *, node_id=None):
+    return operation("PcaCovariance", (x,), {}, node_id)
+
+
+def symmetric_eigendecomposition(c, *, node_id=None):
+    return operation("SymmetricEigendecomposition", (c,), {}, node_id)
+
+
 def pca(x: Tensor, begin: int, end: int, *, node_id: str | None = None) -> Tensor:
     return operation("Pca", (x,), {"begin": begin, "end": end}, node_id)
 

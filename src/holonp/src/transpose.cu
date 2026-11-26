@@ -130,7 +130,7 @@ TransposeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
       .output_descs  = {odesc},
-      .in_place      = {{0, 0}}, // Crucial: Request aliasing from graph engine
+      .in_place      = {{0, 0, true}}, // Crucial: Request aliasing from graph engine
       .owned_inputs  = {false},
       .owned_outputs = {false},
       .kind          = holoflow::core::TaskKind::Sync,

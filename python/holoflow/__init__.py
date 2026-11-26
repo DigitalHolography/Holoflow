@@ -49,6 +49,7 @@ from ._ops import batch_queue, fresnel_diffraction, mean, pca, sliding_average
 from . import fft, sources, sinks
 
 from ._ops import pca_decomposition_queue, pca_projection
+from ._ops import multi_reader_batch_queue, pca_covariance, symmetric_eigendecomposition
 
 uint8 = DType.uint8
 uint16 = DType.uint16

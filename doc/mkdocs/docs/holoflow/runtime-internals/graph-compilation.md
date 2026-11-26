@@ -848,3 +848,22 @@ is unchanged. An unfinished compiler log is lost if the process crashes during c
 Diagnostic files are eventually available. Tests that read them explicitly flush the worker;
 pipeline updates never flush or join it. Process shutdown drains pending jobs. Trace scopes
 separate caller-side snapshots/logger setup from background formatting and writing.
+
+
+## Independent async output groups
+
+An asynchronous node has one producer side and one or more output groups. By default all
+output ports belong to group zero. The compiler places the consumers of each group in a
+single section. Different groups may share a section or run on separate streams, while the
+runtime retains one async task instance.
+
+A section using the reservation protocol reserves all of its queue boundaries before submitting an iteration. A failed
+acquisition returns the outstanding reservations without advancing the committed cursors.
+A successful iteration publishes outputs and releases inputs after completion on its CUDA
+stream. A multi-input section pairs items by position and requires compatible batching and
+order-preserving branches.
+
+`MultiReaderBatchQueue` exposes a group per reader. Its settings match `BatchQueue` with
+the addition of `reader_count`. Sizes, strides and target capacity count elements along
+the input's first axis. Each reader has a separate pointer phase and all readers share a
+single allocation. Loans are read-only and the slowest reader limits space reclamation.

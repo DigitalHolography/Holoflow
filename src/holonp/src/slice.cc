@@ -246,7 +246,7 @@ holoflow::core::InferResult SliceFactory::infer(std::span<const holoflow::core::
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
       .output_descs  = {odesc},
-      .in_place      = {{0, 0}}, // Input 0 -> Output 0
+      .in_place      = {{0, 0, true}}, // Input 0 -> Output 0
       .owned_inputs  = {false},
       .owned_outputs = {false},
       .kind          = holoflow::core::TaskKind::Sync,

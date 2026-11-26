@@ -194,7 +194,8 @@ def load_config(filename):
         dropped_windows = windows % group_size
         if dropped_windows:
             dropped_frames = dropped_windows * temporal_frames
-            source["end_frame"] -= dropped_frames
+            if (source["end_frame"] - dropped_frames - start) % source["batch_size"] == 0:
+                source["end_frame"] -= dropped_frames
             windows -= dropped_windows
             warn(f"Finite FP16 input dropped {dropped_windows} trailing PCA window(s) "
                  f"({dropped_frames} frames) to keep complete four-window groups.",

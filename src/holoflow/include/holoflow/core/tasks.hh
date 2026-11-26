@@ -335,12 +335,18 @@ public:
   virtual void release_pop(AsyncTicket);
   /// Cancel the newest output reservation before submitting its downstream work.
   virtual void cancel_pop(AsyncTicket);
+
+  // One consumer worker per group. Views are ordered by the group's declared ports.
+  virtual OpResult reserve_output_group(size_t group, AsyncPopCtx &, AsyncTicket &);
+  virtual void     release_output_group(size_t group, AsyncTicket);
+  virtual void     cancel_output_group(size_t group, AsyncTicket);
 };
 
 /// Describes an in-place link between an input and output tensor.
 struct InPlace {
-  int in_idx;  ///< Input index reused/aliased.
-  int out_idx; ///< Output index reusing input storage.
+  int  in_idx;                  ///< Input index reused/aliased.
+  int  out_idx;                 ///< Output index reusing input storage.
+  bool read_only_alias = false; ///< The operation creates a view without writing the input.
 };
 
 /// Kind of task: synchronous or asynchronous.
@@ -385,8 +391,11 @@ struct InferResult {
   /// Optional per-port counts. An empty vector or nullopt entry means unknown.
   std::vector<std::optional<size_t>> owned_input_pointer_counts;
   std::vector<std::optional<size_t>> owned_output_pointer_counts;
-  bool supports_prequeued_push = false; ///< Implements the reserved producer protocol.
-  bool supports_prequeued_pop  = false; ///< Implements the reserved consumer protocol.
+  bool supports_prequeued_push = false;           ///< Implements the reserved producer protocol.
+  bool supports_prequeued_pop  = false;           ///< Implements the reserved consumer protocol.
+  std::vector<std::vector<size_t>> output_groups; ///< Empty means one coupled group.
+  bool read_only_outputs = false; ///< Owned outputs may share immutable backing data.
+  bool reserved_pop_eof  = false; ///< Reserved pops report finite closure.
 };
 
 /// Controls how dependent executables are invalidated during a task update.
@@ -461,8 +470,9 @@ struct AsyncCreateCtx {
   cudaStream_t consumer_stream = static_cast<cudaStream_t>(0);
   /// Borrowed invalidation handle supplied by the compiler during updates. Null during initial
   /// creation or when omitted by standalone callers; invalidate_execution() then does nothing.
-  ExecutionInvalidation *execution_invalidation = nullptr;
-  void                   invalidate_execution() const noexcept {
+  ExecutionInvalidation        *execution_invalidation = nullptr;
+  std::span<const cudaStream_t> consumer_streams; ///< Indexed by output group.
+  void                          invalidate_execution() const noexcept {
     if (execution_invalidation)
       execution_invalidation->invalidate();
   }

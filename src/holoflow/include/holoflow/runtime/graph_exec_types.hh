@@ -171,7 +171,10 @@ struct Section {
   std::vector<GraphPlan::vertex_descriptor> sync_topo; ///< Synchronous nodes in topological order.
   std::vector<GraphPlan::vertex_descriptor> const_sync_topo; ///< Constant synchronous nodes, once.
   std::vector<GraphPlan::vertex_descriptor> async_cons;      ///< Asynchronous consumer nodes.
-  std::vector<GraphPlan::vertex_descriptor> async_prod;      ///< Asynchronous producer nodes
+  // Indexed alongside async_cons. Empty means all endpoints are legacy group zero.
+  std::vector<size_t>                       async_cons_groups;
+  bool                                      requires_reservations = false;
+  std::vector<GraphPlan::vertex_descriptor> async_prod; ///< Asynchronous producer nodes
   bool has_synchronizing_async_producer = false; ///< Producer supplies the section stream barrier.
   bool supports_prequeue = false; ///< Boundary ownership supports two outstanding iterations.
   std::string prequeue_fallback_reason;

@@ -175,7 +175,8 @@ holoflow::core::GraphSpec GraphBuilder::Impl::build() {
     }
   }
 
-  H = build_preprocessing(H);
+  if (s_.time_method != TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS)
+    H = build_preprocessing(H);
 
   TDesc FH = build_time_frequency_analysis(H);
 
@@ -295,21 +296,10 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_preprocessing(TDesc H) {
   using MemLoc = holoflow::core::MemLoc;
   using Target = holotask::syncs::ConversionSettings::Target;
   using Strat  = holotask::syncs::ConversionSettings::Strategy;
-  auto Device  = holotask::syncs::MemcpySettings::Target::Device;
-
   if (H.mem_loc != MemLoc::Device) {
-    H = memcpy(H, {Device});
+    H = memcpy(H, {holotask::syncs::MemcpySettings::Target::Device});
     H = batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_window});
   }
-
-  if (enable_f16_pca && !s_.fresnel_use_numpy &&
-      s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS &&
-      s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION && s_.moment_type == MomentType::M0 &&
-      !s_.view_3d_cuts && (!s_.filter_2d || enable_f16_filter2d) &&
-      H.dtype == holoflow::core::DType::U8 && H.shape == std::vector<size_t>{32, 320, 512} &&
-      s_.time_z_end - s_.time_z_begin <= 16)
-    // The input and PCA queues both own their buffers. Keep a device copy between them.
-    return memcpy(H, {Device});
   return convert(H, {Target::F32, Strat::Real});
 }
 
@@ -324,20 +314,45 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_time_frequency_analysis(TDes
   int64_t Hy    = static_cast<int64_t>(H.shape.at(1));
   int64_t Hx    = static_cast<int64_t>(H.shape.at(2));
 
-  H = reshape(H, {{1, T, Hy, Hx}, false});
-
   if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
-    // Keep the four-window grouping, but retain X and eigenvectors together through projection.
-    // The decomposition queue overlaps producer covariance and consumer projection with HEEV.
-    const auto decomposition = pca_decomposition_queue(
-        H, {static_cast<size_t>(N_pre), 3, H.dtype == holoflow::core::DType::U8});
-    const int z0 = s_.view_3d_cuts ? 0 : s_.time_z_begin;
-    const int z1 = s_.view_3d_cuts ? static_cast<int>(T) : s_.time_z_end;
-    return pca_projection(decomposition.at(0), decomposition.at(1),
-                          {z0, z1, H.dtype == holoflow::core::DType::U8,
-                           H.dtype == holoflow::core::DType::U8 ? holoflow::core::DType::F16
-                                                                : holoflow::core::DType::F32});
+    using namespace holoflow::core;
+    const bool host_input = H.mem_loc == MemLoc::Host;
+    if (host_input)
+      T = s_.time_window;
+    const bool fused = enable_f16_pca && !s_.fresnel_use_numpy &&
+                       s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION &&
+                       s_.moment_type == MomentType::M0 && !s_.view_3d_cuts &&
+                       (!s_.filter_2d || enable_f16_filter2d) && H.dtype == DType::U8 && T == 32 &&
+                       Hy == 320 && Hx == 512 && s_.time_z_end - s_.time_z_begin <= 16;
+    if (host_input || fused)
+      H = memcpy(H, {holotask::syncs::MemcpySettings::Target::Device});
+    if (!fused)
+      H = convert(H, {holotask::syncs::ConversionSettings::Target::F32,
+                      holotask::syncs::ConversionSettings::Strategy::Real});
+
+    const int stride  = N_pre * static_cast<int>(T);
+    auto      readers = make_unary_async_node(
+        "pca_input", "MultiReaderBatchQueue", "MultiReaderBatchQueue", H,
+        holotask::asyncs::BatchQueueSettings{std::max<int>(s_.gpu_in_size, 4 * stride), stride,
+                                             stride, "drop", 2});
+    auto covariance_input = reshape(readers[0], {{N_pre, T, Hy, Hx}, false});
+    auto projection_input = reshape(readers[1], {{N_pre, T, Hy, Hx}, false});
+    auto covariance = make_nary_sync_node("pca_covariance", "PcaCovariance", "PcaCovariance",
+                                          std::span(&covariance_input, 1), nlohmann::json::object())
+                          .at(0);
+    covariance      = batched_queue(covariance, {2 * N_pre, N_pre, N_pre});
+    auto vectors    = make_nary_sync_node("pca_eigensolver", "SymmetricEigendecomposition",
+                                          "SymmetricEigendecomposition", std::span(&covariance, 1),
+                                          nlohmann::json::object())
+                          .at(0);
+    vectors         = batched_queue(vectors, {2 * N_pre, N_pre, N_pre});
+    const int z0    = s_.view_3d_cuts ? 0 : s_.time_z_begin;
+    const int z1    = s_.view_3d_cuts ? static_cast<int>(T) : s_.time_z_end;
+    return pca_projection(projection_input, vectors,
+                          {z0, z1, fused, fused ? DType::F16 : DType::F32});
   }
+
+  H = reshape(H, {{1, T, Hy, Hx}, false});
 
   H = batched_queue(H, {N_pre * 2, N_pre, N_pre}); // [N_pre, T, Hy, Hx]
 

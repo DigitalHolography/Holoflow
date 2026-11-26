@@ -119,6 +119,11 @@ std::unique_ptr<hc::Registry> make_registry(bool include_lowered_tasks = false) 
   r->register_sync("PctClip", std::make_unique<holotask::syncs::PctClipFactory>());
   r->register_sync("FresnelDiffraction",
                    std::make_unique<holotask::syncs::FresnelDiffractionFactory>());
+  r->register_sync("PcaCovariance", std::make_unique<holotask::syncs::PcaCovarianceFactory>());
+  r->register_sync("SymmetricEigendecomposition",
+                   std::make_unique<holotask::syncs::SymmetricEigendecompositionFactory>());
+  r->register_async("MultiReaderBatchQueue",
+                    std::make_unique<holotask::asyncs::MultiReaderBatchQueueFactory>());
   r->register_async("BatchQueue", std::make_unique<holotask::asyncs::BatchQueueFactory>());
   r->register_async("SlidingAverage", std::make_unique<holotask::asyncs::SlidingAverageFactory>());
   r->register_sync("Arange", std::make_unique<holonp::ArangeFactory>());

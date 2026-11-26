@@ -315,13 +315,6 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
     return std::to_string(tid);
   };
 
-  auto get_visual_id = [&](size_t v, bool is_source) -> std::string {
-    if (g[v].infer.kind == core::TaskKind::Async) {
-      return is_source ? std::format("v{}_out", v) : std::format("v{}_in", v);
-    }
-    return std::format("v{}", v);
-  };
-
   std::string ids_line = "";
   for (auto v : boost::make_iterator_range(boost::vertices(g))) {
     const auto &np = g[v];
@@ -382,24 +375,29 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
                           is_failure_node ? kFailureBorderColor : kAsyncProducerBorderColor,
                           is_failure_node ? 3 : 1);
 
-        const std::string label_out =
-            label_base.str() + "\n(" + np.spec.kind + "/Read)" + ids_line + "\n";
-        ss << std::format("  v{}_out [label=\"{}\", shape=house, fillcolor=\"{}\", color=\"{}\", "
-                          "penwidth={}, style=\"filled,dashed\"];\n",
-                          v, escape_for_label(label_out),
-                          is_failure_node ? kFailureFillColor : kAsyncConsumerFillColor,
-                          is_failure_node ? kFailureBorderColor : kAsyncConsumerBorderColor,
-                          is_failure_node ? 3 : 1);
-
-        if (uses_block_layout(prefs)) {
-          ss << std::format("  v{}_in:e -> v{}_out:w [style=dotted, color=\"{}\", "
-                            "penwidth=2, arrowhead=none, label=\"Async Signal\", "
-                            "constraint=false];\n",
-                            v, v, kAsyncSignalColor);
-        } else {
-          ss << std::format("  v{}_in -> v{}_out [style=dotted, color=\"{}\", penwidth=2, "
-                            "arrowhead=none, label=\"Async Signal\"];\n",
-                            v, v, kAsyncSignalColor);
+        const auto group_count = (std::max)(size_t{1}, np.infer.output_groups.size());
+        for (size_t group = 0; group < group_count; ++group) {
+          const auto endpoint =
+              group == 0 ? std::format("v{}_out", v) : std::format("v{}_out{}", v, group);
+          const auto label_out = label_base.str() + "\n(" + np.spec.kind + "/Read" +
+                                 (group_count > 1 ? std::format(" {}", group) : "") + ")" +
+                                 ids_line + "\n";
+          ss << std::format("  {} [label=\"{}\", shape=house, fillcolor=\"{}\", color=\"{}\", "
+                            "penwidth={}, style=\"filled,dashed\"];\n",
+                            endpoint, escape_for_label(label_out),
+                            is_failure_node ? kFailureFillColor : kAsyncConsumerFillColor,
+                            is_failure_node ? kFailureBorderColor : kAsyncConsumerBorderColor,
+                            is_failure_node ? 3 : 1);
+          if (uses_block_layout(prefs)) {
+            ss << std::format("  v{}_in:e -> {}:w [style=dotted, color=\"{}\", "
+                              "penwidth=2, arrowhead=none, label=\"Async Signal\", "
+                              "constraint=false];\n",
+                              v, endpoint, kAsyncSignalColor);
+          } else {
+            ss << std::format("  v{}_in -> {} [style=dotted, color=\"{}\", penwidth=2, "
+                              "arrowhead=none, label=\"Async Signal\"];\n",
+                              v, endpoint, kAsyncSignalColor);
+          }
         }
       } else {
         const bool        is_constant = constant_nodes.contains(v);
@@ -448,21 +446,33 @@ static void write_compiled_edges(std::ostringstream &ss, const runtime::GraphPla
     const auto  v  = boost::target(e, g);
     const auto &ep = g[e];
 
-    const std::string u_vis = get_visual_id(u, true);
+    size_t      group  = 0;
+    const auto &groups = g[u].infer.output_groups;
+    for (size_t i = 0; i < groups.size(); ++i)
+      if (std::ranges::find(groups[i], static_cast<size_t>(ep.spec.out_idx)) != groups[i].end())
+        group = i;
+    const auto u_vis = group == 0 ? get_visual_id(u, true) : std::format("v{}_out{}", u, group);
     const std::string v_vis = get_visual_id(v, false);
 
     bool reverse_edge = false;
     if (uses_snake_layout(prefs)) {
       for (size_t section_idx = 0; section_idx < sections.size(); ++section_idx) {
-        const auto &section         = sections[section_idx];
-        const bool  contains_source = g[u].infer.kind == core::TaskKind::Async
-                                          ? contains_vertex(section.async_cons, u)
-                                          : contains_vertex(section.const_sync_topo, u) ||
-                                                contains_vertex(section.sync_topo, u);
-        const bool  contains_target = g[v].infer.kind == core::TaskKind::Async
-                                          ? contains_vertex(section.async_prod, v)
-                                          : contains_vertex(section.const_sync_topo, v) ||
-                                                contains_vertex(section.sync_topo, v);
+        const auto &section = sections[section_idx];
+        const bool  contains_source =
+            g[u].infer.kind == core::TaskKind::Async
+                ? [&] {
+                    for (size_t i = 0; i < section.async_cons.size(); ++i)
+                      if (section.async_cons[i] == u &&
+                          (section.async_cons_groups.empty() ? 0 : section.async_cons_groups[i]) ==
+                              group)
+                        return true;
+                    return false;
+                  }()
+                : contains_vertex(section.const_sync_topo, u) || contains_vertex(section.sync_topo, u);
+        const bool contains_target = g[v].infer.kind == core::TaskKind::Async
+                                         ? contains_vertex(section.async_prod, v)
+                                         : contains_vertex(section.const_sync_topo, v) ||
+                                               contains_vertex(section.sync_topo, v);
         if (contains_source && contains_target) {
           reverse_edge = section_positions[section_idx] % 2 != 0;
           break;
@@ -620,11 +630,21 @@ static void write_compiled_sections(std::ostringstream                  &ss,
       }
     };
 
+    const auto append_consumers = [&](bool reverse) {
+      const auto count = sec.async_cons.size();
+      for (size_t offset = 0; offset < count; ++offset) {
+        const auto i     = reverse ? count - 1 - offset : offset;
+        const auto group = sec.async_cons_groups.empty() ? 0 : sec.async_cons_groups[i];
+        visual_ids.push_back(group == 0 ? std::format("v{}_out", sec.async_cons[i])
+                                        : std::format("v{}_out{}", sec.async_cons[i], group));
+      }
+    };
+
     if (block_layout) {
       ss << std::format("      section_layout_{}_left [shape=point, width=0, height=0, "
                         "label=\"\", style=invis, group=section_layout_left];\n",
                         section_idx);
-      append_visual_ids(sec.async_cons, "_out");
+      append_consumers(false);
       append_visual_ids(sec.const_sync_topo, "");
       append_visual_ids(sec.sync_topo, "");
       append_visual_ids(sec.async_prod, "_in");
@@ -632,9 +652,9 @@ static void write_compiled_sections(std::ostringstream                  &ss,
       append_visual_ids_reversed(sec.async_prod, "_in");
       append_visual_ids_reversed(sec.sync_topo, "");
       append_visual_ids_reversed(sec.const_sync_topo, "");
-      append_visual_ids_reversed(sec.async_cons, "_out");
+      append_consumers(true);
     } else if (snake_layout) {
-      append_visual_ids(sec.async_cons, "_out");
+      append_consumers(false);
       append_visual_ids(sec.const_sync_topo, "");
       append_visual_ids(sec.sync_topo, "");
       append_visual_ids(sec.async_prod, "_in");
@@ -642,7 +662,7 @@ static void write_compiled_sections(std::ostringstream                  &ss,
       append_visual_ids(sec.const_sync_topo, "");
       append_visual_ids(sec.sync_topo, "");
       append_visual_ids(sec.async_prod, "_in");
-      append_visual_ids(sec.async_cons, "_out");
+      append_consumers(false);
     }
 
     for (const auto &visual_id : visual_ids) {

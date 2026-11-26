@@ -24,10 +24,23 @@ def pca(frames, temporal_frames, settings, *, precision="fp32"):
         return hf.pca(windows, begin, end)
     if frames.dtype != hf.uint8 or frames.shape != (32, 320, 512):
         raise ValueError("time.precision: fp16 requires U8 input with shape [32, 320, 512]")
-    # Both queues own their storage. Separate them with the native device copy.
-    windows = _reshape_window(frames.to("device"), temporal_frames)
-    grouped, eigenvectors = hf.pca_decomposition_queue(windows, 4, 3, use_fused_f16=True)
+    raise ValueError("FP16 PCA requires the pipelined frame input")
+
+
+def pipelined_pca(frames, temporal_frames, capacity, settings):
+    if frames.dtype != hf.uint8 or (temporal_frames, *frames.shape[-2:]) != (32, 320, 512):
+        raise ValueError("time.precision: fp16 requires U8 windows with shape [32, 320, 512]")
+    batch = 4
+    stride = batch * temporal_frames
+    x_cov, x_proj = hf.multi_reader_batch_queue(
+        frames, max(capacity, 4 * stride), stride, stride, 2, tail="drop", node_id="uploaded_frames",
+    )
+    shape = (batch, temporal_frames, *frames.shape[-2:])
+    covariance = hf.pca_covariance(x_cov.reshape(shape, copy=False))
+    covariance = hf.batch_queue(covariance, 2 * batch, batch, batch)
+    vectors = hf.symmetric_eigendecomposition(covariance)
+    vectors = hf.batch_queue(vectors, 2 * batch, batch, batch)
     return hf.pca_projection(
-        grouped, eigenvectors, begin, end,
-        use_fused_f16=True,
+        x_proj.reshape(shape, copy=False), vectors, settings["component_begin"],
+        settings["component_end"], use_fused_f16=True,
     )

@@ -50,6 +50,57 @@ public:
   std::vector<Storage> inputs, outputs;
 };
 
+TEST(MultiReaderBatchQueue, SlowReaderPinsStorageAndCancellationPreservesPosition) {
+  holotask::asyncs::MultiReaderBatchQueueFactory factory;
+  const std::array                               inputs{TDesc({1}, DType::F32, MemLoc::Host)};
+  const holotask::asyncs::BatchQueueSettings     settings{2, 1, 1, "drop", 2};
+  QueueStorage                                   storage(factory.infer(inputs, settings));
+  auto                                           queue = factory.create(inputs, settings, {});
+  queue->bind_storage_access(&storage);
+  std::array<TView, 1> output;
+  AsyncPopCtx          pop{output, nullptr};
+  AsyncPushCtx         push{};
+  const auto           publish = [&](float value) {
+    auto view = queue->acquire_input(0);
+    ASSERT_TRUE(view);
+    *reinterpret_cast<float *>(view->data()) = value;
+    ASSERT_EQ(queue->try_push(push), OpResult::Ok);
+  };
+  publish(1);
+  publish(2);
+  AsyncTicket fast_first, fast_second, slow;
+  ASSERT_EQ(queue->reserve_output_group(0, pop, fast_first), OpResult::Ok);
+  auto *first = output[0].data();
+  ASSERT_EQ(queue->reserve_output_group(0, pop, fast_second), OpResult::Ok);
+  ASSERT_NE(output[0].data(), first);
+  queue->cancel_output_group(0, fast_second);
+  queue->release_output_group(0, fast_first);
+  ASSERT_EQ(queue->reserve_output_group(0, pop, fast_second), OpResult::Ok);
+  EXPECT_FLOAT_EQ(*reinterpret_cast<float *>(output[0].data()), 2);
+  queue->release_output_group(0, fast_second);
+  EXPECT_FALSE(queue->acquire_input(0));
+  ASSERT_EQ(queue->reserve_output_group(1, pop, slow), OpResult::Ok);
+  EXPECT_EQ(output[0].data(), first);
+  EXPECT_FALSE(queue->acquire_input(0));
+  queue->release_output_group(1, slow);
+  publish(3);
+  queue->close_input();
+  ASSERT_EQ(queue->reserve_output_group(0, pop, fast_first), OpResult::Ok);
+  EXPECT_FLOAT_EQ(*reinterpret_cast<float *>(output[0].data()), 3);
+  queue->release_output_group(0, fast_first);
+  EXPECT_EQ(queue->reserve_output_group(0, pop, fast_first), OpResult::Eof);
+  ASSERT_EQ(queue->reserve_output_group(1, pop, slow), OpResult::Ok);
+  EXPECT_FLOAT_EQ(*reinterpret_cast<float *>(output[0].data()), 2);
+  queue->release_output_group(1, slow);
+
+  const auto addresses = queue->owned_input_pointers(0);
+  queue                = factory.update(std::move(queue), inputs, settings, {});
+  queue->bind_storage_access(&storage);
+  EXPECT_EQ(queue->owned_input_pointers(0), addresses);
+  EXPECT_EQ(queue->reserve_output_group(0, pop, fast_first), OpResult::NotReady);
+  EXPECT_EQ(queue->reserve_output_group(1, pop, slow), OpResult::NotReady);
+}
+
 TEST(PcaPipeline, ValidatesDescriptorsAndPreservesGrouping) {
   holotask::asyncs::PcaDecompositionQueueFactory queue;
   const std::array input{TDesc({1, 32, 320, 512}, DType::F32, MemLoc::Device)};
@@ -397,7 +448,7 @@ std::shared_ptr<PipelineState> run_pipeline(bool pipeline, size_t graph_limit, b
                                             size_t features = 2, bool performance = false,
                                             size_t duration_ms      = 10000,
                                             size_t benchmark_height = 320, bool mixed = false,
-                                            bool toggle_correction = false) {
+                                            bool toggle_correction = false, bool generic = false) {
   auto state         = std::make_shared<PipelineState>();
   state->mixed       = mixed;
   state->features    = features;
@@ -416,14 +467,19 @@ std::shared_ptr<PipelineState> run_pipeline(bool pipeline, size_t graph_limit, b
   registry.register_async("batch", std::make_unique<holotask::asyncs::BatchQueueFactory>());
   registry.register_async("decomposition",
                           std::make_unique<holotask::asyncs::PcaDecompositionQueueFactory>());
+  registry.register_sync("covariance", std::make_unique<holotask::syncs::PcaCovarianceFactory>());
+  registry.register_sync("eigensolver",
+                         std::make_unique<holotask::syncs::SymmetricEigendecompositionFactory>());
   GraphSpec spec;
   auto      source = add_vertex(NodeSpec{"source", "source", {}}, spec);
   auto      input =
       add_vertex(NodeSpec{"input", "batch", holotask::asyncs::BatchQueueSettings{8, 1, 1}}, spec);
   auto copy    = add_vertex(NodeSpec{"copy", "copy", holonp::CopySettings{}}, spec);
   auto grouped = add_vertex(
-      pipeline ? NodeSpec{"grouped", "decomposition", QueueSettings{4, 3, mixed}}
-               : NodeSpec{"grouped", "batch", holotask::asyncs::BatchQueueSettings{8, 4, 4}},
+      generic
+          ? NodeSpec{"grouped", "batch", holotask::asyncs::BatchQueueSettings{16, 4, 4, "drop", 2}}
+      : pipeline ? NodeSpec{"grouped", "decomposition", QueueSettings{4, 3, mixed}}
+                 : NodeSpec{"grouped", "batch", holotask::asyncs::BatchQueueSettings{8, 4, 4}},
       spec);
   const holotask::syncs::PcaSettings selection{mixed ? 0 : 1, (performance || mixed) ? 16 : 2,
                                                mixed, mixed ? DType::F16 : DType::F32};
@@ -434,9 +490,23 @@ std::shared_ptr<PipelineState> run_pipeline(bool pipeline, size_t graph_limit, b
   add_edge(source, input, EdgeSpec{0, 0}, spec);
   add_edge(input, copy, EdgeSpec{0, 0}, spec);
   add_edge(copy, grouped, EdgeSpec{0, 0}, spec);
-  add_edge(grouped, compute, EdgeSpec{0, 0}, spec);
-  if (pipeline)
-    add_edge(grouped, compute, EdgeSpec{1, 1}, spec);
+  if (generic) {
+    const holotask::asyncs::BatchQueueSettings matrices{8, 4, 4};
+    auto cov = add_vertex(NodeSpec{"covariance", "covariance", {}}, spec);
+    auto qc  = add_vertex(NodeSpec{"qc", "batch", matrices}, spec);
+    auto eig = add_vertex(NodeSpec{"eigensolver", "eigensolver", {}}, spec);
+    auto qv  = add_vertex(NodeSpec{"qv", "batch", matrices}, spec);
+    add_edge(grouped, cov, EdgeSpec{0, 0}, spec);
+    add_edge(cov, qc, EdgeSpec{0, 0}, spec);
+    add_edge(qc, eig, EdgeSpec{0, 0}, spec);
+    add_edge(eig, qv, EdgeSpec{0, 0}, spec);
+    add_edge(grouped, compute, EdgeSpec{1, 0}, spec);
+    add_edge(qv, compute, EdgeSpec{0, 1}, spec);
+  } else {
+    add_edge(grouped, compute, EdgeSpec{0, 0}, spec);
+    if (pipeline)
+      add_edge(grouped, compute, EdgeSpec{1, 1}, spec);
+  }
   add_edge(compute, output, EdgeSpec{0, 0}, spec);
   add_edge(output, sink, EdgeSpec{0, 0}, spec);
   Compiler::Config config;
@@ -540,6 +610,18 @@ TEST(PcaPipeline, MatchesSynchronousPcaAcrossWraparoundPauseFallbackAndStop) {
   }
 }
 
+TEST(PcaPipeline, GenericQueuesMatchConventionalAcrossWraparound) {
+  const auto baseline = run_pipeline(false, 0);
+  for (size_t graph_limit : {0, 128}) {
+    const auto actual = run_pipeline(true, graph_limit, false, false, false, 2, false, 10000, 320,
+                                     false, false, true);
+    ASSERT_EQ(actual->values.size(), baseline->values.size());
+    for (size_t i = 0; i < actual->values.size(); ++i)
+      EXPECT_NEAR(actual->values[i], baseline->values[i],
+                  2e-3F * std::max(1.F, std::abs(baseline->values[i])));
+  }
+}
+
 TEST(PcaPipeline, MatchesCusolverFallback) {
   const auto baseline = run_pipeline(false, 0, false, false, false, 256);
   const auto actual   = run_pipeline(true, 128, false, false, false, 256);
@@ -563,24 +645,25 @@ TEST(PcaPipeline, PerformanceOverlap) {
   const auto runs          = benchmark_option("HOLOFLOW_PCA_BENCHMARK_RUNS", 5);
   const auto selected_mode = benchmark_option("HOLOFLOW_PCA_BENCHMARK_MODE", 0);
   const auto height        = benchmark_option("HOLOFLOW_PCA_BENCHMARK_HEIGHT", 320);
-  std::array<std::vector<double>, 2> rates;
+  std::array<std::vector<double>, 3> rates;
+  const std::array                   names{"baseline", "legacy", "generic"};
   for (size_t run = 0; run < runs; ++run)
-    for (size_t order = 0; order < 2; ++order) {
-      const size_t mode = (run + order) % 2; // Alternate order to reduce clock/thermal bias.
+    for (size_t order = 0; order < rates.size(); ++order) {
+      const size_t mode =
+          (run + order) % rates.size(); // Alternate order to reduce clock/thermal bias.
       if (selected_mode && selected_mode != mode + 1)
         continue;
-      const auto result =
-          run_pipeline(mode != 0, 128, false, false, false, 32, true, duration, height);
+      const auto result = run_pipeline(mode != 0, 128, false, false, false, 32, true, duration,
+                                       height, false, false, mode == 2);
       rates[mode].push_back(result->windows_per_second);
       EXPECT_GT(result->windows_per_second, 0);
-      std::cout << "PCA mode=" << (mode ? "pipeline" : "baseline") << " run=" << run
+      std::cout << "PCA mode=" << names[mode] << " run=" << run
                 << " windows_per_second=" << result->windows_per_second << std::endl;
     }
-  for (size_t mode = 0; mode < 2; ++mode) {
+  for (size_t mode = 0; mode < rates.size(); ++mode) {
     std::sort(rates[mode].begin(), rates[mode].end());
     if (!rates[mode].empty())
-      std::cout << "PCA mode=" << (mode ? "pipeline" : "baseline")
-                << " median=" << rates[mode][rates[mode].size() / 2]
+      std::cout << "PCA mode=" << names[mode] << " median=" << rates[mode][rates[mode].size() / 2]
                 << " min=" << rates[mode].front() << " max=" << rates[mode].back() << std::endl;
   }
 }

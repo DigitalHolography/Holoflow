@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MultiReaderBatchQueueSettings",
+  "description": "One contiguous ring shared by a fixed set of independent readers.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "target_capacity": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "output_size": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "output_stride": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "reader_count": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "tail": {
+      "enum": [
+        "error",
+        "drop"
+      ],
+      "default": "error"
+    }
+  },
+  "required": [
+    "target_capacity",
+    "output_size",
+    "output_stride",
+    "reader_count"
+  ],
+  "examples": [
+    {
+      "target_capacity": 32,
+      "output_size": 4,
+      "output_stride": 4,
+      "reader_count": 2,
+      "tail": "drop"
+    }
+  ]
+}
