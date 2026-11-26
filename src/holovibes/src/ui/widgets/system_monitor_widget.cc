@@ -44,7 +44,23 @@ void SystemMonitorWidget::set_gpu_throughput(const QString &text) {
 }
 void SystemMonitorWidget::set_ram_usage(const QString &text) { ram_usage_value_->setText(text); }
 void SystemMonitorWidget::set_vram_usage(const QString &text) { vram_usage_value_->setText(text); }
-void SystemMonitorWidget::set_batch_info(const QString &text) { batch_info_value_->setText(text); }
+void SystemMonitorWidget::set_batch_info(double batch_bytes, qulonglong frames_per_batch) {
+  if (batch_bytes <= 0.0 || frames_per_batch == 0) {
+    batch_info_value_->setText("N/A");
+    return;
+  }
+
+  constexpr const char *units[] = {"B", "KiB", "MiB", "GiB"};
+  int unit_index = 0;
+  while (batch_bytes >= 1024.0 && unit_index < 3) {
+    batch_bytes /= 1024.0;
+    ++unit_index;
+  }
+  batch_info_value_->setText(QStringLiteral("%1 frames / %2 %3")
+                                 .arg(frames_per_batch)
+                                 .arg(batch_bytes, 0, 'f', 2)
+                                 .arg(QString::fromLatin1(units[unit_index])));
+}
 void SystemMonitorWidget::set_dropped_frames(const QString &text) {
   dropped_frames_value_->setText(text);
 }
@@ -95,7 +111,7 @@ void SystemMonitorWidget::setup_ui() {
   add_metric_row(7, "VRAM Usage:", &vram_usage_value_, "N/A");
   add_metric_row(8, "Dropped Frames:", &dropped_frames_value_, "N/A");
   add_metric_row(9, "Latency:", &pipeline_latency_value_, "N/A");
-  add_metric_row(10, "Target / frames:", &batch_info_value_, "N/A");
+  add_metric_row(10, "Batch Size:", &batch_info_value_, "N/A");
 
   layout->addLayout(metrics_layout);
 

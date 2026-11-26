@@ -2185,13 +2185,9 @@ void MainWindow::on_memory_metrics_updated(qulonglong used_vram, qulonglong tota
       QStringLiteral("%1 / %2 GiB")
           .arg(static_cast<double>(used_ram) / gib, 0, 'f', 2)
           .arg(static_cast<double>(total_ram) / gib, 0, 'f', 2));
-  const double frame_mib = static_cast<double>(frame_bytes) / (1024.0 * 1024.0);
-  const double batch_mib = frame_mib * static_cast<double>(target_frames_per_batch);
-  monitor_widget_->set_batch_info(
-      QStringLiteral("%1 MiB / %2 frames (%3 MiB)")
-          .arg(frame_mib, 0, 'f', 2)
-          .arg(target_frames_per_batch)
-          .arg(batch_mib, 0, 'f', 2));
+  const double batch_bytes = static_cast<double>(frame_bytes) *
+                             static_cast<double>(target_frames_per_batch);
+  monitor_widget_->set_batch_info(batch_bytes, target_frames_per_batch);
 }
 
 void MainWindow::on_metrics_updated(double input_fps) {

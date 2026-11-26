@@ -37,7 +37,7 @@ public:
   void set_gpu_throughput(const QString &text);
   void set_ram_usage(const QString &text);
   void set_vram_usage(const QString &text);
-  void set_batch_info(const QString &text);
+  void set_batch_info(double batch_bytes, qulonglong frames_per_batch);
   void set_dropped_frames(const QString &text);
   void set_pipeline_latency(const QString &text);
 

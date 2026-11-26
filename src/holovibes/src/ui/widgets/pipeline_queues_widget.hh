@@ -44,6 +44,7 @@ private:
   QSpinBox *max_vram_spin_;
   QSpinBox *max_ram_spin_;
   QSpinBox *target_batch_spin_;
+  std::array<QLabel*, 6> share_labels_{};
   std::array<QSpinBox*, 6> share_spins_{};
   QLabel *share_label_;
   bool valid_shares() const;
