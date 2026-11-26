@@ -412,7 +412,7 @@ private:
 namespace holovibes::ui {
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent), session_id_(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss")) {
+    : QMainWindow(parent), session_date_(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss")) {
   setup_main_layout();
   initialize_display_widgets();
   restore_persistent_state();
@@ -463,7 +463,7 @@ void MainWindow::setup_main_layout() {
       "specified.");
 
   auto *session_label  = new QLabel("Session", session_bar);
-  session_value_label_ = new QLabel(session_id_, session_bar);
+  session_value_label_ = new QLabel(session_date_, session_bar);
   session_value_label_->setObjectName("sessionValue");
 
   auto *next_acquisition_label = new QLabel("Next Acquisition", session_bar);
@@ -727,18 +727,36 @@ QString MainWindow::sanitize_recording_token(const QString &value) const {
   return token;
 }
 
+QString MainWindow::find_patient(QString name) const {
+  return name.replace("{patient}", sanitize_recording_token(patient_line_edit_->text()),
+                      Qt::CaseInsensitive);
+}
+
+QString MainWindow::find_date(QString name) const {
+  return name.replace("{date}", session_date_, Qt::CaseInsensitive);
+}
+
+QString MainWindow::find_eye(QString name) const {
+  return name.replace("{eye}", sanitize_recording_token(eye_side_combo_->currentText()),
+                      Qt::CaseInsensitive);
+}
+
 QString MainWindow::recording_file_name(int acquisition_id) const {
-  const QString patient = sanitize_recording_token(patient_line_edit_->text());
-  const QString eye     = sanitize_recording_token(eye_side_combo_->currentText());
-  const QString format =
-      export_widget_ == nullptr ? QStringLiteral("holo") : export_widget_->get_format();
+  QString name = export_widget_->get_file_name_template();
+  name = find_patient(name);
+  name = find_date(name);
+  name = find_eye(name);
+  name = QFileInfo(name).fileName();
+  if (name.isEmpty()) {
+    name = "recording";
+  }
+  const QString format = export_widget_->get_format();
   const auto   *format_info = holotask::sinks::ffmpeg_format(format.toStdString());
   const QString extension =
       format_info == nullptr
           ? QStringLiteral("holo")
           : QString::fromUtf8(format_info->extension.data(), format_info->extension.size());
-  return QString("%1_%2_%3_%4.%5")
-      .arg(patient, eye, session_id_, acquisition_label(acquisition_id), extension);
+  return QString("%1_%2.%3").arg(name, acquisition_label(acquisition_id), extension);
 }
 
 QString MainWindow::acquisition_label(int acquisition_id) const {
@@ -945,6 +963,7 @@ void MainWindow::save_persistent_state() {
   settings.setValue("codec", export_widget_->get_codec());
   settings.setValue("resize_algorithm", export_widget_->get_resize_algorithm());
   settings.setValue("file_path", export_widget_->get_file_path());
+  settings.setValue("file_name_template", export_widget_->get_file_name_template());
   settings.setValue("tag", export_widget_->get_tag());
   settings.setValue("frame_count_enabled", export_widget_->is_frame_count_enabled());
   settings.setValue("frame_count", export_widget_->get_frame_count());
@@ -1129,6 +1148,8 @@ void MainWindow::restore_persistent_state() {
   restore_combo_text(settings, "resize_algorithm", export_widget_->resize_algorithm_combo());
   export_widget_->set_file_path(
       settings.value("file_path", export_widget_->get_file_path()).toString());
+  export_widget_->set_file_name_template(
+      settings.value("file_name_template", export_widget_->get_file_name_template()).toString());
   restore_combo_text(settings, "tag", export_widget_->tag_combo());
   export_widget_->frames_check()->setChecked(
       settings.value("frame_count_enabled", export_widget_->is_frame_count_enabled()).toBool());
@@ -1465,6 +1486,8 @@ void MainWindow::connect_import_controls() {
 }
 
 void MainWindow::connect_export_controls() {
+  connect(export_widget_->file_name_template_edit(), &QLineEdit::textChanged, this,
+          &MainWindow::update_recording_path_preview);
 
   connect(export_widget_->format_combo(), qOverload<int>(&QComboBox::currentIndexChanged), this,
           [this](int) { update_recording_path_preview(); });
