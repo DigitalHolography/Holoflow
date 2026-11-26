@@ -325,7 +325,7 @@ var assemblies = [
   {
     "name": "holovibes",
     "classes": [
-      { "name": "src", "rp": "holovibes_src.html", "cl": 582, "ucl": 6841, "cal": 7423, "tl": 15295, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
+      { "name": "src", "rp": "holovibes_src.html", "cl": 582, "ucl": 6855, "cal": 7437, "tl": 15318, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
     ]},
 ];
 
