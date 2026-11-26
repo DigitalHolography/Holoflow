@@ -1002,6 +1002,10 @@ void Manager::run_compiled_graph() {
     ScopedTrace scope("Start Scheduler");
     scheduler_->start();
   }
+  if (!log_root_.empty()) {
+    holoflow::runtime::dump_compiled_graph_async(log_root_ / "compiled.dot", *compiler_output_,
+                                                 graph_compiled_dump_prefs_, "compiled_pipeline");
+  }
   {
     ScopedTrace scope("Start Metrics Updates");
     start_metrics_updates();

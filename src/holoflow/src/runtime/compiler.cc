@@ -278,6 +278,8 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
     });
 
     if (config_.dump_dot_on_failure) {
+      if (!config_.log_dir.empty())
+        out_->resources.compilation_success_dot = config_.log_dir / "compilation_success.dot";
       run_pass("Dump Graphviz", [&] { dump_graphviz("compilation_success.dot"); });
     }
   } catch (const std::exception &e) {

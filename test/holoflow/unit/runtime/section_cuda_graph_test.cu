@@ -8,6 +8,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <thread>
@@ -448,7 +449,7 @@ protected:
     config.log_dir                 = log_directory;
     config.verbose_tracing         = false;
     config.enable_profiling        = false;
-    config.dump_dot_on_failure     = false;
+    config.dump_dot_on_failure     = dump_dot;
     return Compiler(registry, config).compile(spec, std::move(prev));
   }
   void run(CompilerOutput &out) {
@@ -471,6 +472,7 @@ protected:
   std::map<std::string, NodeMetrics> metrics, section_metrics;
   nlohmann::json                     diagnostics;
   std::filesystem::path              log_directory;
+  bool                               dump_dot = false;
 };
 
 TEST_F(SectionCudaGraphTest, EagerProductReplaysRotatingPointersAndOffsets) {
@@ -1048,7 +1050,7 @@ TEST_F(SectionCudaGraphTest, PauseRetainsEveryCompletedOperationAndGraphVariant)
 }
 
 TEST_F(SectionCudaGraphTest, StoppingPausedSchedulerCancelsTasksExactlyOnce) {
-  auto out = compile();
+  auto      out = compile();
   Scheduler scheduler(out->graph, out->sections, out->resources);
   state->operation_hook = [&](const char *point) {
     if (std::string(point) == "pop")
@@ -1254,6 +1256,7 @@ TEST_F(SectionCudaGraphTest, JsonReportSurvivesInvalidEnumerationAndRecordingFai
   log_directory = std::filesystem::temp_directory_path() /
                   ("holoflow-section-diagnostics-" +
                    std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  dump_dot      = true;
   spec[source].settings["bad"] = true;
   EXPECT_THROW(compile(), std::invalid_argument);
   auto read_report = [&]() {
@@ -1272,6 +1275,12 @@ TEST_F(SectionCudaGraphTest, JsonReportSurvivesInvalidEnumerationAndRecordingFai
   spec[last].settings["fail_after"] = 4;
   auto out                          = compile();
   EXPECT_EQ(read_report()[0]["status"], "planned");
+  const auto read_dot = [&] {
+    section_diagnostics_file_writer().flush();
+    std::ifstream file(log_directory / "compilation_success.dot");
+    return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+  };
+  EXPECT_NE(read_dot().find("CUDA graphs (planned): 6 planned"), std::string::npos);
   run(*out);
   report = read_report();
   EXPECT_EQ(report[0]["status"], "fallback");
@@ -1281,6 +1290,17 @@ TEST_F(SectionCudaGraphTest, JsonReportSurvivesInvalidEnumerationAndRecordingFai
   EXPECT_EQ(report[0]["created"], 1);
   EXPECT_EQ(report[0]["discarded"], 1);
   EXPECT_EQ(report[0]["ordinary_iterations"], 13);
+  const auto fallback_dot = read_dot();
+  EXPECT_NE(fallback_dot.find("CUDA graphs (fallback): 0 installed"), std::string::npos);
+  EXPECT_NE(fallback_dot.find(report[0]["fallback_reason"].get<std::string>()), std::string::npos);
+
+  spec[last].settings.erase("fail_after");
+  state->frame = 0;
+  state->results.clear();
+  out = compile();
+  EXPECT_NE(read_dot().find("CUDA graphs (planned): 6 planned"), std::string::npos);
+  run(*out);
+  EXPECT_NE(read_dot().find("CUDA graphs (ready): 6 installed, 6 created"), std::string::npos);
 }
 
 TEST_F(SectionCudaGraphTest, InstantiationFailureRetainsDomainsAndRestoresOrdinaryExecution) {

@@ -155,6 +155,7 @@ struct ExecResouces {
   std::map<std::string, std::unique_ptr<core::ITask>>           tasks;   ///< Task instances by ID.
   size_t                                                        max_section_cuda_graphs = 0;
   std::filesystem::path                                         section_cuda_graph_log_dir;
+  std::filesystem::path                                         compilation_success_dot;
   uint64_t                                                      compilation_generation = 0;
   // One-use plan for the first start; compilation has already validated these pointer domains.
   std::shared_ptr<SectionCudaGraphInspection> section_cuda_graph_inspection;

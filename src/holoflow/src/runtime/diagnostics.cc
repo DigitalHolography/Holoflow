@@ -43,16 +43,16 @@ void dump_compiled_graph_async(const std::filesystem::path &dot_path, const Comp
                             GraphFailureKind::Runtime);
 }
 
-void dump_compiled_graph_async(const std::filesystem::path &dot_path, const CompilerOutput &output,
-                               const GraphCompiledDumpPreferences &preferences,
-                               std::string graph_name, std::string failure_node,
-                               std::string      failure_context,
-                               GraphFailureKind failure_kind) noexcept {
+namespace {
+void submit_compiled_dump(const std::filesystem::path &dot_path, auto capture_snapshot,
+                          const GraphCompiledDumpPreferences &preferences, std::string graph_name,
+                          std::string failure_node, std::string failure_context,
+                          GraphFailureKind failure_kind) noexcept {
   try {
     std::shared_ptr<const GraphCompiledDumpSnapshot> snapshot;
     {
       tracing::ScopedTrace copy("Copy Compiled Graph Snapshot", "detail");
-      snapshot = make_graph_compiled_dump_snapshot(output);
+      snapshot = capture_snapshot();
     }
     tracing::ScopedTrace submit("Submit Compiled Graph Dump", "detail");
     section_diagnostics_file_writer().submit_text(
@@ -69,5 +69,27 @@ void dump_compiled_graph_async(const std::filesystem::path &dot_path, const Comp
     } catch (...) {
     }
   }
+}
+} // namespace
+
+void dump_compiled_graph_async(const std::filesystem::path &dot_path, const CompilerOutput &output,
+                               const GraphCompiledDumpPreferences &preferences,
+                               std::string graph_name, std::string failure_node,
+                               std::string      failure_context,
+                               GraphFailureKind failure_kind) noexcept {
+  submit_compiled_dump(
+      dot_path, [&] { return make_graph_compiled_dump_snapshot(output); }, preferences,
+      std::move(graph_name), std::move(failure_node), std::move(failure_context), failure_kind);
+}
+
+void detail::refresh_compilation_success_dot(const GraphPlan            &graph,
+                                             const std::vector<Section> &sections,
+                                             const ExecResouces         &resources) noexcept {
+  if (resources.compilation_success_dot.empty())
+    return;
+  submit_compiled_dump(
+      resources.compilation_success_dot,
+      [&] { return detail::make_graph_compiled_dump_snapshot(graph, sections, resources); }, {},
+      "compilation_success", {}, {}, GraphFailureKind::Compilation);
 }
 } // namespace holoflow::runtime

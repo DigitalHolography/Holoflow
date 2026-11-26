@@ -157,3 +157,35 @@ TEST(CompiledGraphDisplayTest, SnapshotMatchesEmptyAndPartialOutputAcrossPrefere
     }
   }
 }
+
+TEST(CompiledGraphDisplayTest, ShowsCudaGraphPreparationBySection) {
+  using namespace holoflow::runtime;
+  CompilerOutput output;
+  output.sections.push_back({.id = 7, .name = "compute", .stream = nullptr});
+  auto  graphs = std::make_unique<SectionCudaGraphs>();
+  auto &report = graphs->diagnostics;
+  output.resources.section_cuda_graphs.emplace(7, std::move(graphs));
+  EXPECT_EQ(to_dot(output).find("CUDA graphs"), std::string::npos);
+
+  report = {{"status", "planned"}, {"pruned_count", nullptr}};
+  EXPECT_NE(to_dot(output).find("unknown planned"), std::string::npos);
+
+  report             = {{"status", "planned"}, {"pruned_count", size_t{6}}};
+  const auto planned = make_graph_compiled_dump_snapshot(output);
+  EXPECT_NE(to_dot(*planned).find("CUDA graphs (planned): 6 planned"), std::string::npos);
+  EXPECT_EQ(to_dot(*planned), to_dot(output));
+
+  report = {
+      {"status", "ready"}, {"variants", 6}, {"created", 2}, {"reused", 4}, {"node_count", 12}};
+  EXPECT_NE(to_dot(output).find("6 installed, 2 created, 4 reused, 12 CUDA nodes"),
+            std::string::npos);
+  EXPECT_NE(to_dot(*planned).find("6 planned"), std::string::npos);
+
+  report              = {{"status", "fallback"}, {"fallback_reason", "Task \"compute\" failed"}};
+  const auto fallback = to_dot(output);
+  EXPECT_NE(fallback.find("CUDA graphs (fallback): 0 installed"), std::string::npos);
+  EXPECT_NE(fallback.find(R"(Task \"compute\" failed)"), std::string::npos);
+  GraphCompiledDumpPreferences prefs;
+  prefs.dump_section_info = false;
+  EXPECT_EQ(to_dot(output, prefs).find("CUDA graphs"), std::string::npos);
+}

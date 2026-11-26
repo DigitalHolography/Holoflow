@@ -15,6 +15,7 @@
 #define NOMINMAX
 
 #include "holoflow/runtime/graph_exec.hh"
+#include "holoflow/runtime/diagnostics.hh"
 #include "holoflow/runtime/tracing.hh"
 
 #include <algorithm>
@@ -659,6 +660,7 @@ void Scheduler::Impl::start() {
     // Graph preparation writes before eligibility is selected. Publish the actual scheduling
     // decision as well, including on resume, before any worker can update runtime counters.
     write_section_cuda_graph_diagnostics(res_);
+    detail::refresh_compilation_success_dot(graph_, sections_, res_);
   } catch (...) {
     running_.store(false);
     throw;

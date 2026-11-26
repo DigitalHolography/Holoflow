@@ -175,6 +175,11 @@ and protect exception paths. Details and examples are in the
 
 ## Read the reports
 
+Compiled DOT files show planned CUDA graph variants by section. Scheduler startup refreshes
+the same file with installed, created, and reused counts, the total CUDA node count across
+variants, and any fallback reason. Match the section name to its NVTX range in Nsight Systems.
+For actual launches and fallback during execution, see `section_cuda_graphs.json`.
+
 `Scheduler::section_graph_diagnostics()` exposes planned and prepared counts, reuse/create/discard
 counts, fallback reasons, and launch/miss counters. Host graph-submission timing is not GPU execution
 duration. See the [diagnostics](section-cuda-graphs-reference.md#diagnostics) and

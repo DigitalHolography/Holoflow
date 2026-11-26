@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "holoflow/runtime/graph_display.hh"
+#include "holoflow/runtime/diagnostics.hh"
 
 #include "holoflow/core/tensor.hh"
 
@@ -55,9 +56,10 @@ constexpr std::string_view kSectionBorderColor       = "gray";
 constexpr std::string_view kSectionFillColor         = "#f8f8f8";
 
 struct CompiledGraphDumpMetadata {
-  std::vector<size_t>      stream_ids;
-  std::vector<std::string> task_names;
-  std::vector<uintptr_t>   section_stream_addresses;
+  std::vector<size_t>        stream_ids;
+  std::vector<std::string>   task_names;
+  std::vector<uintptr_t>     section_stream_addresses;
+  std::map<int, std::string> section_cuda_graph_labels;
 };
 
 static std::string replace_newlines_escaped_with_l(const std::string &s) {
@@ -195,27 +197,64 @@ struct GraphCompiledDumpSnapshot {
   CompiledGraphDumpMetadata metadata;
 };
 
-static CompiledGraphDumpMetadata snapshot_compiled_metadata(const CompilerOutput &out) {
+static std::string cuda_graph_label(const SectionCudaGraphs &graphs) {
+  std::lock_guard lock(graphs.diagnostic_mutex);
+  const auto     &report = graphs.diagnostics;
+  const auto      status = report.value("status", std::string{});
+  if (status.empty())
+    return {};
+
+  std::string label   = "CUDA graphs (" + status + ")";
+  const auto  planned = report.find("pruned_count");
+  if (status == "planned") {
+    return label + ": " +
+           (planned != report.end() && planned->is_number_integer() ? planned->dump()
+                                                                    : std::string{"unknown"}) +
+           " planned";
+  }
+  label += std::format(": {} installed, {} created, {} reused, {} CUDA nodes",
+                       report.value("variants", size_t{0}), report.value("created", size_t{0}),
+                       report.value("reused", size_t{0}), report.value("node_count", size_t{0}));
+  const auto reason = report.value("fallback_reason", std::string{});
+  if (!reason.empty())
+    label += "\n" + reason;
+  return label;
+}
+
+static CompiledGraphDumpMetadata snapshot_compiled_metadata(const std::vector<Section> &sections,
+                                                            const ExecResouces         &resources) {
   CompiledGraphDumpMetadata metadata;
-  metadata.stream_ids.reserve(out.resources.streams.size());
-  for (const auto &[id, stream] : out.resources.streams)
+  metadata.stream_ids.reserve(resources.streams.size());
+  for (const auto &[id, stream] : resources.streams)
     metadata.stream_ids.push_back(id);
-  metadata.task_names.reserve(out.resources.tasks.size());
-  for (const auto &[name, task] : out.resources.tasks)
+  metadata.task_names.reserve(resources.tasks.size());
+  for (const auto &[name, task] : resources.tasks)
     metadata.task_names.push_back(name);
-  metadata.section_stream_addresses.reserve(out.sections.size());
-  for (const auto &section : out.sections)
+  metadata.section_stream_addresses.reserve(sections.size());
+  for (const auto &section : sections) {
     metadata.section_stream_addresses.push_back(reinterpret_cast<uintptr_t>(section.stream));
+    const auto found = resources.section_cuda_graphs.find(section.id);
+    if (found != resources.section_cuda_graphs.end() && found->second) {
+      auto label = cuda_graph_label(*found->second);
+      if (!label.empty())
+        metadata.section_cuda_graph_labels.emplace(section.id, std::move(label));
+    }
+  }
   return metadata;
 }
 
 std::shared_ptr<const GraphCompiledDumpSnapshot>
 make_graph_compiled_dump_snapshot(const CompilerOutput &out) {
+  return detail::make_graph_compiled_dump_snapshot(out.graph, out.sections, out.resources);
+}
+
+std::shared_ptr<const GraphCompiledDumpSnapshot> detail::make_graph_compiled_dump_snapshot(
+    const GraphPlan &graph, const std::vector<Section> &sections, const ExecResouces &resources) {
   auto snapshot        = std::make_shared<GraphCompiledDumpSnapshot>();
-  snapshot->graph      = out.graph;
-  snapshot->sections   = out.sections;
-  snapshot->tid_to_sid = out.resources.tid_to_sid;
-  snapshot->metadata   = snapshot_compiled_metadata(out);
+  snapshot->graph      = graph;
+  snapshot->sections   = sections;
+  snapshot->tid_to_sid = resources.tid_to_sid;
+  snapshot->metadata   = snapshot_compiled_metadata(sections, resources);
   for (auto &section : snapshot->sections)
     section.stream = nullptr;
   return snapshot;
@@ -530,7 +569,7 @@ static std::vector<size_t> get_section_layout_order(const std::vector<runtime::S
 static void write_compiled_sections(std::ostringstream                  &ss,
                                     const std::vector<runtime::Section> &sections,
                                     const GraphCompiledDumpPreferences  &prefs,
-                                    std::span<const uintptr_t>           stream_addresses) {
+                                    const CompiledGraphDumpMetadata     &metadata) {
   const bool row_layout   = uses_section_layout(prefs);
   const bool block_layout = uses_block_layout(prefs);
   const bool snake_layout = uses_snake_layout(prefs);
@@ -552,8 +591,12 @@ static void write_compiled_sections(std::ostringstream                  &ss,
       ss << ": " << escape_for_label(sec.name);
     }
     if (prefs.dump_section_stream_addr) {
-      ss << std::format(" (Stream {})", reinterpret_cast<void *>(stream_addresses[section_idx]));
+      ss << std::format(" (Stream {})",
+                        reinterpret_cast<void *>(metadata.section_stream_addresses[section_idx]));
     }
+    const auto cuda_graphs = metadata.section_cuda_graph_labels.find(sec.id);
+    if (cuda_graphs != metadata.section_cuda_graph_labels.end())
+      ss << "\\l" << escape_for_label(cuda_graphs->second);
     ss << std::format("\\l\";\n");
 
     ss << std::format("    style=rounded; color={}; bgcolor=\"{}\";\n", kSectionBorderColor,
@@ -659,7 +702,7 @@ render_compiled_graph(const GraphPlan &graph, const std::vector<Section> &sectio
   write_compiled_edges(ss, graph, tid_to_sid, prefs, sections);
   ss << "\n";
   if (prefs.dump_section_info) {
-    write_compiled_sections(ss, sections, prefs, metadata.section_stream_addresses);
+    write_compiled_sections(ss, sections, prefs, metadata);
   }
   ss << "}\n";
   return ss.str();
@@ -668,15 +711,16 @@ render_compiled_graph(const GraphPlan &graph, const std::vector<Section> &sectio
 std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences &prefs,
                    std::string_view filename) {
   return render_compiled_graph(out.graph, out.sections, out.resources.tid_to_sid,
-                               snapshot_compiled_metadata(out), prefs, filename);
+                               snapshot_compiled_metadata(out.sections, out.resources), prefs,
+                               filename);
 }
 
 std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences &prefs,
                    std::string_view filename, std::string_view failure_node,
                    std::string_view failure_context, GraphFailureKind failure_kind) {
   return render_compiled_graph(out.graph, out.sections, out.resources.tid_to_sid,
-                               snapshot_compiled_metadata(out), prefs, filename, failure_node,
-                               failure_context, failure_kind);
+                               snapshot_compiled_metadata(out.sections, out.resources), prefs,
+                               filename, failure_node, failure_context, failure_kind);
 }
 
 std::string to_dot(const GraphCompiledDumpSnapshot    &snapshot,

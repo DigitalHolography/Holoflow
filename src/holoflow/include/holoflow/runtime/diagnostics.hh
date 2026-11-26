@@ -4,6 +4,7 @@
 #pragma once
 
 #include "holoflow/runtime/graph_display.hh"
+#include "holoflow/runtime/graph_exec_types.hh"
 #include <filesystem>
 
 namespace holoflow::runtime {
@@ -23,5 +24,13 @@ void dump_compiled_graph_async(const std::filesystem::path &dot_path, const Comp
                                const GraphCompiledDumpPreferences &preferences,
                                std::string graph_name, std::string failure_node,
                                std::string failure_context, GraphFailureKind failure_kind) noexcept;
+
+namespace detail {
+std::shared_ptr<const GraphCompiledDumpSnapshot>
+make_graph_compiled_dump_snapshot(const GraphPlan &graph, const std::vector<Section> &sections,
+                                  const ExecResouces &resources);
+void refresh_compilation_success_dot(const GraphPlan &graph, const std::vector<Section> &sections,
+                                     const ExecResouces &resources) noexcept;
+} // namespace detail
 
 } // namespace holoflow::runtime
