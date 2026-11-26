@@ -44,6 +44,11 @@ def symmetric_eigendecomposition(c, *, node_id=None):
     return operation("SymmetricEigendecomposition", (c,), {}, node_id)
 
 
+def matmul(a: Tensor, b: Tensor, *, math_mode="default", node_id=None):
+    """Multiply device matrices or batches of matrices with matching batch shapes."""
+    return operation("Matmul", (a, b), {"math_mode": math_mode}, node_id)
+
+
 def pca(x: Tensor, begin: int, end: int, *, node_id: str | None = None) -> Tensor:
     return operation("Pca", (x,), {"begin": begin, "end": end}, node_id)
 

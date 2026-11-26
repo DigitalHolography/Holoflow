@@ -503,6 +503,96 @@ private:
   std::unique_ptr<Eigensolver> solver_;
 };
 
+constexpr size_t fused_samples = 320 * 512;
+
+class FusedMatmulTask final : public holoflow::core::ISyncTask {
+public:
+  FusedMatmulTask(bool gram, size_t batches, cudaStream_t stream)
+      : gram_(gram), stream_(stream),
+        scratch_(gram
+                     ? curaii::make_unique_device_ptr<float>(batches * (fused_samples / 512) * 1024)
+                     : curaii::unique_device_ptr<float>{}) {}
+  bool supports_cuda_graph() const noexcept override { return true; }
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    enqueue(ctx.inputs, ctx.outputs[0]);
+  }
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    enqueue(ctx.inputs, ctx.outputs[0]);
+    return holoflow::core::OpResult::Ok;
+  }
+
+private:
+  void enqueue(std::span<holoflow::core::TView> inputs, holoflow::core::TView &output) {
+    if (gram_) {
+      pca_f16::covariance(inputs[0].data(), scratch_.get(),
+                          reinterpret_cast<float *>(output.data()), output.desc.shape[0], stream_,
+                          true);
+      return;
+    }
+    const auto &v = inputs[0].desc;
+    for (size_t b = 0; b < v.shape[0]; ++b)
+      pca_f16::matmul(inputs[1].data() + b * inputs[1].desc.strides[0],
+                      reinterpret_cast<const float *>(inputs[0].data() + b * v.strides[0]),
+                      output.data() + b * output.desc.strides[0], static_cast<int>(v.shape[1]),
+                      v.strides[1] / sizeof(float), v.strides[2] / sizeof(float), stream_);
+  }
+  bool                             gram_;
+  cudaStream_t                     stream_;
+  curaii::unique_device_ptr<float> scratch_;
+};
+
+class EighTask final : public holoflow::core::ISyncTask {
+public:
+  EighTask(const holoflow::core::TDesc &input, bool lower, cudaStream_t stream)
+      : layout_(holoflow::core::TDesc(
+            {input.rank() == 3 ? input.shape[0] : 1, input.shape.back(), 1, 1}, input.dtype,
+            input.mem_loc)),
+        lower_(lower), stream_(stream), workspace_(layout_),
+        solver_(make_eigensolver(layout_, workspace_, stream)) {
+    CUBLAS_CHECK(cublasSetStream(cublas_.get(), stream));
+  }
+  bool supports_cuda_graph() const noexcept override { return true; }
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    enqueue(ctx.inputs, ctx.outputs);
+  }
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    enqueue(ctx.inputs, ctx.outputs);
+    return holoflow::core::OpResult::Ok;
+  }
+
+private:
+  void transpose(const float *input, float *output) {
+    constexpr float one = 1, zero = 0;
+    const int       n = layout_.features;
+    for (size_t batch = 0; batch < layout_.batches; ++batch) {
+      const auto offset = batch * layout_.matrix_batch_stride;
+      CUBLAS_CHECK(cublasSgeam(cublas_.get(), CUBLAS_OP_T, CUBLAS_OP_N, n, n, &one, input + offset,
+                               n, &zero, input + offset, n, output + offset, n));
+    }
+  }
+  void enqueue(std::span<holoflow::core::TView> inputs, std::span<holoflow::core::TView> outputs) {
+    nvtx3::scoped_range range("Eigh");
+    const auto         *input  = reinterpret_cast<const float *>(inputs[0].data());
+    auto               *matrix = workspace_.matrices.get();
+    if (lower_)
+      transpose(input, matrix);
+    else
+      CUDA_CHECK(cudaMemcpyAsync(matrix, input, inputs[0].desc.num_bytes(),
+                                 cudaMemcpyDeviceToDevice, stream_));
+    solver_->solve(matrix, workspace_.eigenvalues.get(), workspace_.solver_info.get(), stream_);
+    CUDA_CHECK(cudaMemcpyAsync(outputs[0].data(), workspace_.eigenvalues.get(),
+                               outputs[0].desc.num_bytes(), cudaMemcpyDeviceToDevice, stream_));
+    transpose(matrix, reinterpret_cast<float *>(outputs[1].data()));
+  }
+
+  PcaLayout                    layout_;
+  bool                         lower_;
+  cudaStream_t                 stream_;
+  PcaWorkspace                 workspace_;
+  std::unique_ptr<Eigensolver> solver_;
+  curaii::CublasHandle         cublas_;
+};
+
 class PcaEvent {
 public:
   PcaEvent() { CUDA_CHECK(cudaEventCreateWithFlags(&event_, cudaEventDisableTiming)); }
@@ -1499,6 +1589,73 @@ SymmetricEigendecompositionFactory::create(std::span<const holoflow::core::TDesc
                                            const holoflow::core::SyncCreateCtx   &ctx) const {
   (void)infer(inputs, settings);
   return std::make_unique<SymmetricEigendecompositionTask>(inputs[0], ctx.stream);
+}
+
+holoflow::core::InferResult FusedMatmulFactory::infer(std::span<const holoflow::core::TDesc> inputs,
+                                                      const nlohmann::json &settings) const {
+  using namespace holoflow::core;
+  const bool gram = settings.at("gram").get<bool>();
+  if (inputs.size() != (gram ? 1U : 2U))
+    throw std::invalid_argument("FusedMatmul input count");
+  const auto &x = inputs.back();
+  if (x.rank() != 3 || x.shape[0] == 0 || x.shape[1] != 32 || x.shape[2] != fused_samples ||
+      x.dtype != DType::U8 || x.mem_loc != MemLoc::Device ||
+      x.strides != TDesc(x.shape, x.dtype, x.mem_loc).strides)
+    throw std::invalid_argument("FusedMatmul requires contiguous U8 [B,32,163840]");
+  size_t components = 32;
+  if (!gram) {
+    const auto &v = inputs[0];
+    if (v.rank() != 3 || v.shape[0] != x.shape[0] || v.shape[1] == 0 || v.shape[1] > 16 ||
+        v.shape[2] != 32 || v.dtype != DType::F32 || v.mem_loc != MemLoc::Device ||
+        v.strides[1] % sizeof(float) || v.strides[2] % sizeof(float))
+      throw std::invalid_argument("FusedMatmul coefficient layout");
+    components = v.shape[1];
+  }
+  return {.input_descs   = std::vector<TDesc>(inputs.begin(), inputs.end()),
+          .output_descs  = {TDesc({x.shape[0], components, gram ? 32 : fused_samples},
+                                  gram ? DType::F32 : DType::F16, MemLoc::Device)},
+          .owned_inputs  = std::vector<bool>(inputs.size(), false),
+          .owned_outputs = {false},
+          .kind          = TaskKind::Sync};
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+FusedMatmulFactory::create(std::span<const holoflow::core::TDesc> inputs,
+                           const nlohmann::json                  &settings,
+                           const holoflow::core::SyncCreateCtx   &ctx) const {
+  (void)infer(inputs, settings);
+  const bool gram = settings.at("gram").get<bool>();
+  return std::make_unique<FusedMatmulTask>(gram, inputs.back().shape[0], ctx.stream);
+}
+
+holoflow::core::InferResult EighFactory::infer(std::span<const holoflow::core::TDesc> inputs,
+                                               const nlohmann::json &settings) const {
+  using namespace holoflow::core;
+  const auto uplo = settings.value("uplo", std::string("L"));
+  if ((uplo != "L" && uplo != "U") || inputs.size() != 1)
+    throw std::invalid_argument("Eigh expects one input and UPLO L or U");
+  const auto &a = inputs[0];
+  const TDesc vectors(a.shape, DType::F32, MemLoc::Device);
+  if ((a.rank() != 2 && a.rank() != 3) || a.shape.back() != a.shape[a.rank() - 2] ||
+      std::ranges::find(a.shape, 0) != a.shape.end() || a.dtype != vectors.dtype ||
+      a.mem_loc != vectors.mem_loc || a.strides != vectors.strides ||
+      a.shape.back() > static_cast<size_t>((std::numeric_limits<int>::max)()))
+    throw std::invalid_argument("Eigh expects contiguous device FP32 square matrices");
+  auto values_shape = a.shape;
+  values_shape.pop_back();
+  return {.input_descs   = {a},
+          .output_descs  = {TDesc(values_shape, DType::F32, MemLoc::Device), vectors},
+          .owned_inputs  = {false},
+          .owned_outputs = {false, false},
+          .kind          = TaskKind::Sync};
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+EighFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohmann::json &settings,
+                    const holoflow::core::SyncCreateCtx &ctx) const {
+  (void)infer(inputs, settings);
+  return std::make_unique<EighTask>(inputs[0], settings.value("uplo", std::string("L")) == "L",
+                                    ctx.stream);
 }
 
 holoflow::core::InferResult

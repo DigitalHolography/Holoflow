@@ -56,6 +56,8 @@ public:
            lower_tasks;
     size_t max_section_cuda_graphs =
         4096; ///< Strict product cap per section; zero disables graphs.
+    std::function<std::optional<core::GraphSpec>(const GraphPlan &, const core::Registry &)>
+        lower_matmul_tasks;
   };
 
   explicit Compiler(core::Registry &registry, Config config = {});

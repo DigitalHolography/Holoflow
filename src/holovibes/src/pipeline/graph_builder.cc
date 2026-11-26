@@ -335,21 +335,31 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_time_frequency_analysis(TDes
         "pca_input", "MultiReaderBatchQueue", "MultiReaderBatchQueue", H,
         holotask::asyncs::BatchQueueSettings{std::max<int>(s_.gpu_in_size, 4 * stride), stride,
                                              stride, "drop", 2});
-    auto covariance_input = reshape(readers[0], {{N_pre, T, Hy, Hx}, false});
-    auto projection_input = reshape(readers[1], {{N_pre, T, Hy, Hx}, false});
-    auto covariance = make_nary_sync_node("pca_covariance", "PcaCovariance", "PcaCovariance",
-                                          std::span(&covariance_input, 1), nlohmann::json::object())
-                          .at(0);
+    auto gram_input = reshape(readers[0], {{N_pre, T, Hy * Hx}, false});
+    if (fused)
+      gram_input = convert(gram_input, {holotask::syncs::ConversionSettings::Target::F32,
+                                        holotask::syncs::ConversionSettings::Strategy::Real});
+    const holonp::MatmulSettings math{fused ? "default" : "fast_f16"};
+    auto covariance = matmul(gram_input, transpose(gram_input, {{0, 2, 1}}), math);
     covariance      = batched_queue(covariance, {2 * N_pre, N_pre, N_pre});
-    auto vectors    = make_nary_sync_node("pca_eigensolver", "SymmetricEigendecomposition",
-                                          "SymmetricEigendecomposition", std::span(&covariance, 1),
-                                          nlohmann::json::object())
-                          .at(0);
-    vectors         = batched_queue(vectors, {2 * N_pre, N_pre, N_pre});
-    const int z0    = s_.view_3d_cuts ? 0 : s_.time_z_begin;
-    const int z1    = s_.view_3d_cuts ? static_cast<int>(T) : s_.time_z_end;
-    return pca_projection(projection_input, vectors,
-                          {z0, z1, fused, fused ? DType::F16 : DType::F32});
+    auto vectors = make_nary_sync_node("pca_eigensolver", "Eigh", "Eigh", std::span(&covariance, 1),
+                                       nlohmann::json{{"uplo", "U"}})
+                       .at(1);
+    vectors      = batched_queue(vectors, {2 * N_pre, N_pre, N_pre});
+    const int z0 = s_.view_3d_cuts ? 0 : s_.time_z_begin;
+    const int z1 = s_.view_3d_cuts ? static_cast<int>(T) : s_.time_z_end;
+    auto      samples = reshape(readers[1], {{N_pre, T, Hy * Hx}, false});
+    if (fused) {
+      const holotask::syncs::ConversionSettings half{
+          holotask::syncs::ConversionSettings::Target::F16,
+          holotask::syncs::ConversionSettings::Strategy::Real};
+      samples = convert(samples, half);
+      vectors = convert(vectors, half);
+    }
+    auto coefficients =
+        slice(transpose(vectors, {{0, 2, 1}}),
+              {{holonp::SliceRange{}, holonp::SliceRange{z0, z1}, holonp::SliceRange{}}});
+    return reshape(matmul(coefficients, samples, math), {{N_pre, z1 - z0, Hy, Hx}, false});
   }
 
   H = reshape(H, {{1, T, Hy, Hx}, false});

@@ -18,8 +18,11 @@
 #include "holoflow/runtime/compiler.hh"
 #include "holonp/copy.hh"
 #include "holonp/fftshift.hh"
+#include "holonp/matmul.hh"
 #include "holonp/mean.hh"
 #include "holonp/reshape.hh"
+#include "holonp/slice.hh"
+#include "holonp/transpose.hh"
 #include "holonp/zeros.hh"
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
@@ -467,9 +470,11 @@ std::shared_ptr<PipelineState> run_pipeline(bool pipeline, size_t graph_limit, b
   registry.register_async("batch", std::make_unique<holotask::asyncs::BatchQueueFactory>());
   registry.register_async("decomposition",
                           std::make_unique<holotask::asyncs::PcaDecompositionQueueFactory>());
-  registry.register_sync("covariance", std::make_unique<holotask::syncs::PcaCovarianceFactory>());
-  registry.register_sync("eigensolver",
-                         std::make_unique<holotask::syncs::SymmetricEigendecompositionFactory>());
+  registry.register_sync("Matmul", std::make_unique<holonp::MatmulFactory>());
+  registry.register_sync("Eigh", std::make_unique<holotask::syncs::EighFactory>());
+  registry.register_sync("Transpose", std::make_unique<holonp::TransposeFactory>());
+  registry.register_sync("Slice", std::make_unique<holonp::SliceFactory>());
+  registry.register_sync("Reshape", std::make_unique<holonp::ReshapeFactory>());
   GraphSpec spec;
   auto      source = add_vertex(NodeSpec{"source", "source", {}}, spec);
   auto      input =
@@ -483,7 +488,12 @@ std::shared_ptr<PipelineState> run_pipeline(bool pipeline, size_t graph_limit, b
       spec);
   const holotask::syncs::PcaSettings selection{mixed ? 0 : 1, (performance || mixed) ? 16 : 2,
                                                mixed, mixed ? DType::F16 : DType::F32};
-  auto compute = add_vertex(NodeSpec{"compute", pipeline ? "projection" : "pca", selection}, spec);
+  const holonp::MatmulSettings       math{"fast_f16"};
+  auto                               compute =
+      add_vertex(generic ? NodeSpec{"compute", "Matmul", math}
+                         : NodeSpec{"compute", pipeline ? "projection" : "pca", selection},
+                 spec);
+  auto result = compute;
   auto output =
       add_vertex(NodeSpec{"output", "batch", holotask::asyncs::BatchQueueSettings{8, 1, 1}}, spec);
   auto sink = add_vertex(NodeSpec{"sink", "sink", {}}, spec);
@@ -492,22 +502,48 @@ std::shared_ptr<PipelineState> run_pipeline(bool pipeline, size_t graph_limit, b
   add_edge(copy, grouped, EdgeSpec{0, 0}, spec);
   if (generic) {
     const holotask::asyncs::BatchQueueSettings matrices{8, 4, 4};
-    auto cov = add_vertex(NodeSpec{"covariance", "covariance", {}}, spec);
-    auto qc  = add_vertex(NodeSpec{"qc", "batch", matrices}, spec);
-    auto eig = add_vertex(NodeSpec{"eigensolver", "eigensolver", {}}, spec);
-    auto qv  = add_vertex(NodeSpec{"qv", "batch", matrices}, spec);
-    add_edge(grouped, cov, EdgeSpec{0, 0}, spec);
+    const auto                                 t = static_cast<int64_t>(features);
+    const auto                                 h = static_cast<int64_t>(state->height);
+    const auto                                 w = static_cast<int64_t>(state->width);
+    const holonp::ReshapeSettings              matrix_shape{{4, t, h * w}, false};
+    auto left  = add_vertex(NodeSpec{"gram_input", "Reshape", matrix_shape}, spec);
+    auto right = add_vertex(
+        NodeSpec{"gram_transpose", "Transpose", holonp::TransposeSettings{{0, 2, 1}}}, spec);
+    auto cov  = add_vertex(NodeSpec{"covariance", "Matmul", math}, spec);
+    auto qc   = add_vertex(NodeSpec{"qc", "batch", matrices}, spec);
+    auto eig  = add_vertex(NodeSpec{"eigensolver", "Eigh", {{"uplo", "U"}}}, spec);
+    auto qv   = add_vertex(NodeSpec{"qv", "batch", matrices}, spec);
+    auto rows = add_vertex(
+        NodeSpec{"vector_rows", "Transpose", holonp::TransposeSettings{{0, 2, 1}}}, spec);
+    auto coeff = add_vertex(
+        NodeSpec{"coeff", "Slice",
+                 holonp::SliceSettings{{holonp::SliceRange{},
+                                        holonp::SliceRange{selection.begin, selection.end},
+                                        holonp::SliceRange{}}}},
+        spec);
+    auto samples = add_vertex(NodeSpec{"samples", "Reshape", matrix_shape}, spec);
+    result = add_vertex(NodeSpec{"images", "Reshape",
+                                 holonp::ReshapeSettings{{4, selection.components(), h, w}, false}},
+                        spec);
+    add_edge(grouped, left, EdgeSpec{0, 0}, spec);
+    add_edge(left, right, EdgeSpec{0, 0}, spec);
+    add_edge(left, cov, EdgeSpec{0, 0}, spec);
+    add_edge(right, cov, EdgeSpec{0, 1}, spec);
     add_edge(cov, qc, EdgeSpec{0, 0}, spec);
     add_edge(qc, eig, EdgeSpec{0, 0}, spec);
-    add_edge(eig, qv, EdgeSpec{0, 0}, spec);
-    add_edge(grouped, compute, EdgeSpec{1, 0}, spec);
-    add_edge(qv, compute, EdgeSpec{0, 1}, spec);
+    add_edge(eig, qv, EdgeSpec{1, 0}, spec);
+    add_edge(qv, rows, EdgeSpec{0, 0}, spec);
+    add_edge(rows, coeff, EdgeSpec{0, 0}, spec);
+    add_edge(coeff, compute, EdgeSpec{0, 0}, spec);
+    add_edge(grouped, samples, EdgeSpec{1, 0}, spec);
+    add_edge(samples, compute, EdgeSpec{0, 1}, spec);
+    add_edge(compute, result, EdgeSpec{0, 0}, spec);
   } else {
     add_edge(grouped, compute, EdgeSpec{0, 0}, spec);
     if (pipeline)
       add_edge(grouped, compute, EdgeSpec{1, 1}, spec);
   }
-  add_edge(compute, output, EdgeSpec{0, 0}, spec);
+  add_edge(result, output, EdgeSpec{0, 0}, spec);
   add_edge(output, sink, EdgeSpec{0, 0}, spec);
   Compiler::Config config;
   config.enable_profiling        = false;
@@ -574,7 +610,7 @@ std::shared_ptr<PipelineState> run_pipeline(bool pipeline, size_t graph_limit, b
       break;
     if (pause && pass == 0 && miss)
       for (const auto &section : compiled->sections)
-        if (compiled->graph[section.sync_topo.front()].spec.name == "compute")
+        if (std::ranges::find(section.sync_topo, compute) != section.sync_topo.end())
           compiled->resources.section_cuda_graphs.at(section.id)->tuple_indices.clear();
     if (stop_paused)
       break;
@@ -587,7 +623,7 @@ std::shared_ptr<PipelineState> run_pipeline(bool pipeline, size_t graph_limit, b
     EXPECT_EQ(state->consumed, stop_paused ? 5U : state->target);
   if (graph_limit && pipeline)
     for (const auto &section : compiled->sections)
-      if (compiled->graph[section.sync_topo.front()].spec.name == "compute") {
+      if (std::ranges::find(section.sync_topo, compute) != section.sync_topo.end()) {
         const auto &graphs = *compiled->resources.section_cuda_graphs.at(section.id);
         EXPECT_GT(graphs.launches.load(), 0U);
         EXPECT_GT(graphs.prequeue_submissions.load(), 0U);
@@ -624,10 +660,13 @@ TEST(PcaPipeline, GenericQueuesMatchConventionalAcrossWraparound) {
 
 TEST(PcaPipeline, MatchesCusolverFallback) {
   const auto baseline = run_pipeline(false, 0, false, false, false, 256);
-  const auto actual   = run_pipeline(true, 128, false, false, false, 256);
-  ASSERT_EQ(actual->values.size(), baseline->values.size());
-  for (size_t i = 0; i < actual->values.size(); ++i)
-    EXPECT_NEAR(actual->values[i], baseline->values[i], 2e-3F);
+  for (bool generic : {false, true}) {
+    const auto actual =
+        run_pipeline(true, 128, false, false, false, 256, false, 10000, 320, false, false, generic);
+    ASSERT_EQ(actual->values.size(), baseline->values.size());
+    for (size_t i = 0; i < actual->values.size(); ++i)
+      EXPECT_NEAR(actual->values[i], baseline->values[i], 2e-3F);
+  }
 }
 
 size_t benchmark_option(const char *name, size_t fallback) {

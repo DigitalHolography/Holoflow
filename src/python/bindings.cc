@@ -31,6 +31,7 @@
 #include "holonp/exp.hh"
 #include "holonp/fft2.hh"
 #include "holonp/fftshift.hh"
+#include "holonp/matmul.hh"
 #include "holonp/max.hh"
 #include "holonp/mean.hh"
 #include "holonp/meshgrid.hh"
@@ -54,6 +55,7 @@
 #include "holotask/syncs/filter2d.hh"
 #include "holotask/syncs/flatfield.hh"
 #include "holotask/syncs/fresnel_diffraction.hh"
+#include "holotask/syncs/matmul_lowering.hh"
 #include "holotask/syncs/memcpy.hh"
 #include "holotask/syncs/normalize.hh"
 #include "holotask/syncs/pca.hh"
@@ -97,8 +99,10 @@ public:
 
 std::unique_ptr<hc::Registry> make_registry(bool include_lowered_tasks = false) {
   auto r = std::make_unique<hc::Registry>();
-  if (include_lowered_tasks)
+  if (include_lowered_tasks) {
     r->register_sync("FusedFFT2", std::make_unique<holoflow::python::FusedFft2Factory>(*r));
+    r->register_sync("FusedMatmul", std::make_unique<holotask::syncs::FusedMatmulFactory>());
+  }
   r->register_sync("ArrayCollector", std::make_unique<holoflow::python::ArrayCollectorFactory>());
   r->register_sync("Holofile", std::make_unique<holotask::sources::HolofileFactory>());
   r->register_sync("HolofileWriter", std::make_unique<holotask::sinks::HolofileFactory>());
@@ -112,6 +116,8 @@ std::unique_ptr<hc::Registry> make_registry(bool include_lowered_tasks = false) 
   r->register_sync("Divide", std::make_unique<holonp::DivideFactory>());
   r->register_sync("Filter2D", std::make_unique<holotask::syncs::Filter2DFactory>());
   r->register_sync("Flatfield", std::make_unique<holotask::syncs::FlatfieldFactory>());
+  r->register_sync("Matmul", std::make_unique<holonp::MatmulFactory>());
+  r->register_sync("Eigh", std::make_unique<holotask::syncs::EighFactory>());
   r->register_sync("Pca", std::make_unique<holotask::syncs::PcaFactory>());
   r->register_sync("PcaProjection", std::make_unique<holotask::syncs::PcaProjectionFactory>());
   r->register_async("PcaDecompositionQueue",
@@ -209,16 +215,17 @@ public:
       : capture_(!log_dir.empty() && capture ? std::make_unique<ProfileCapture>(log_dir) : nullptr),
         log_dir_(log_dir), registry_(make_registry(true)),
         compiler_(std::make_unique<hr::Compiler>(
-            *registry_,
-            hr::Compiler::Config{.log_dir             = log_dir,
-                                 .dump_dot_on_failure = !log_dir.empty(),
-                                 .verbose_tracing     = false,
-                                 .enable_profiling    = false,
-                                 .lower_tasks =
-                                     fuse_tasks ? holoflow::python::lower_fft_tasks : nullptr})) {
+            *registry_, hr::Compiler::Config{
+                            .log_dir             = log_dir,
+                            .dump_dot_on_failure = !log_dir.empty(),
+                            .verbose_tracing     = false,
+                            .enable_profiling    = false,
+                            .lower_tasks = fuse_tasks ? holoflow::python::lower_fft_tasks : nullptr,
+                            .lower_matmul_tasks =
+                                fuse_tasks ? holotask::syncs::lower_matmul_tasks : nullptr})) {
     for (const auto v : boost::make_iterator_range(vertices(spec))) {
-      if (spec[v].kind == "FusedFFT2")
-        throw std::invalid_argument("FusedFFT2 is an internal compiler task");
+      if (spec[v].kind == "FusedFFT2" || spec[v].kind == "FusedMatmul")
+        throw std::invalid_argument(spec[v].kind + " is an internal compiler task");
       node_ids_.insert(spec[v].name);
     }
     for (const auto v : boost::make_iterator_range(vertices(spec)))

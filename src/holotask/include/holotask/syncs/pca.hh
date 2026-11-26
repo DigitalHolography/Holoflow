@@ -69,6 +69,26 @@ public:
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 
+class EighFactory final : public holoflow::core::ISyncTaskFactory {
+public:
+  holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
+                                    const nlohmann::json &jsettings) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+};
+
+class FusedMatmulFactory final : public holoflow::core::ISyncTaskFactory {
+public:
+  holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
+                                    const nlohmann::json &jsettings) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+};
+
 class PcaFactory : public holoflow::core::ISyncTaskFactory {
 public:
   holoflow::core::ExecutionUpdatePolicy execution_update_policy() const noexcept override {

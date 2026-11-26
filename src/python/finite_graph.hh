@@ -51,6 +51,8 @@ inline core::GraphSpec prepare_finite_graph(core::GraphSpec spec, core::Registry
                                            "Max",
                                            "Subtract",
                                            "Divide",
+                                           "Matmul",
+                                           "Eigh",
                                            "Pca",
                                            "PcaDecompositionQueue",
                                            "PcaProjection",

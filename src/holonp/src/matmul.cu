@@ -21,6 +21,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -29,9 +30,11 @@
 
 namespace holonp {
 
-void to_json(nlohmann::json &j, const MatmulSettings &) { j = nlohmann::json::object(); }
+void to_json(nlohmann::json &j, const MatmulSettings &s) { j = {{"math_mode", s.math_mode}}; }
 
-void from_json(const nlohmann::json &, MatmulSettings &) {}
+void from_json(const nlohmann::json &j, MatmulSettings &s) {
+  s.math_mode = j.is_null() ? "default" : j.value("math_mode", std::string("default"));
+}
 
 namespace {
 
@@ -42,7 +45,8 @@ inline void check(bool cond, const std::string &msg) {
 
 struct Layout {
   holoflow::core::TDesc output_desc;
-  int                   rank;
+  int                   lda, ldb;
+  cublasOperation_t     opa, opb;
   int                   m;
   int                   k;
   int                   n;
@@ -59,10 +63,11 @@ Layout infer_layout(std::span<const holoflow::core::TDesc> input_descs) {
 
   check(a.mem_loc == holoflow::core::MemLoc::Device && b.mem_loc == holoflow::core::MemLoc::Device,
         "only Device tensors are supported");
-  check(utils::is_c_contiguous(a) && utils::is_c_contiguous(b), "inputs must be C-contiguous");
+
   check(a.dtype == b.dtype, "inputs must have the same dtype");
-  check(a.dtype == holoflow::core::DType::F32 || a.dtype == holoflow::core::DType::CF32,
-        "supported dtypes are F32 and CF32");
+  check(a.dtype == holoflow::core::DType::F32 || a.dtype == holoflow::core::DType::CF32 ||
+            a.dtype == holoflow::core::DType::F16,
+        "supported dtypes are F16, F32 and CF32");
   check(a.shape.size() >= 2 && b.shape.size() >= 2, "inputs must have rank >= 2");
   check(a.shape.size() == b.shape.size(), "batched inputs must have the same rank");
 
@@ -90,15 +95,42 @@ Layout infer_layout(std::span<const holoflow::core::TDesc> input_descs) {
   for (int i = 0; i < rank - 2; ++i)
     batch_count *= a.shape[static_cast<size_t>(i)];
 
+  const auto matrix_layout = [&](const auto &d) {
+    const auto element = holoflow::core::size_of(d.dtype);
+    const auto rows = d.shape[rank - 2], cols = d.shape[rank - 1];
+    const auto row = d.strides[rank - 2], col = d.strides[rank - 1];
+    const bool row_major = col == element && row / element >= cols && row % element == 0;
+    const auto leading   = row_major ? row : col;
+    check(row_major || (row == element && col / element >= rows && col % element == 0),
+          "unsupported matrix strides");
+    check(leading / element <= static_cast<size_t>(std::numeric_limits<int>::max()),
+          "leading dimension exceeds cuBLAS limits");
+    const auto span =
+        row_major ? (rows - 1) * row + cols * element : (cols - 1) * col + rows * element;
+    const auto stride = rank == 2 ? span : d.strides[rank - 3];
+    check(rank == 2 || d.shape[rank - 3] == 1 || stride >= span, "overlapping batch matrices");
+    size_t expected = stride;
+    for (int axis = rank - 3; axis >= 0; --axis) {
+      check(d.shape[axis] <= 1 || d.strides[axis] == expected, "batch strides must be uniform");
+      expected *= d.shape[axis];
+    }
+    return std::tuple{static_cast<int>(leading / element), row_major ? CUBLAS_OP_N : CUBLAS_OP_T,
+                      stride};
+  };
+  const auto [lda, opa, stride_a] = matrix_layout(a);
+  const auto [ldb, opb, stride_b] = matrix_layout(b);
   return Layout{
       .output_desc = holoflow::core::TDesc(output_shape, a.dtype, holoflow::core::MemLoc::Device),
-      .rank        = rank,
+      .lda         = lda,
+      .ldb         = ldb,
+      .opa         = opa,
+      .opb         = opb,
       .m           = static_cast<int>(m),
       .k           = static_cast<int>(k),
       .n           = static_cast<int>(n),
       .batch_count = batch_count,
-      .a_batch_stride = m * k,
-      .b_batch_stride = k * n,
+      .a_batch_stride = stride_a,
+      .b_batch_stride = stride_b,
       .c_batch_stride = m * n,
   };
 }
@@ -113,6 +145,11 @@ public:
   }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+  bool                     supports_cuda_graph() const noexcept override { return true; }
+  void                     record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs};
+    (void)execute(execution);
+  }
 
   const MatmulSettings        &settings() const { return settings_; }
   const holoflow::core::TDesc &a_desc() const { return a_desc_; }
@@ -138,29 +175,32 @@ private:
 holoflow::core::OpResult Matmul::execute(holoflow::core::SyncCtx &ctx) {
   constexpr float alpha_f = 1.0f;
   constexpr float beta_f  = 0.0f;
-  const auto     *a       = reinterpret_cast<const float *>(ctx.inputs[0].data());
-  const auto     *b       = reinterpret_cast<const float *>(ctx.inputs[1].data());
-  auto           *c       = reinterpret_cast<float *>(ctx.outputs[0].data());
-
+  using holoflow::core::DType;
   for (size_t batch = 0; batch < layout_.batch_count; ++batch) {
-    const auto a_offset = static_cast<long long>(batch * layout_.a_batch_stride);
-    const auto b_offset = static_cast<long long>(batch * layout_.b_batch_stride);
-    const auto c_offset = static_cast<long long>(batch * layout_.c_batch_stride);
-
-    if (a_desc_.dtype == holoflow::core::DType::F32) {
-      CUBLAS_CHECK(cublasSgemm(cublas_.get(), CUBLAS_OP_N, CUBLAS_OP_N, layout_.n, layout_.m,
-                               layout_.k, &alpha_f, b + b_offset, layout_.n, a + a_offset,
-                               layout_.k, &beta_f, c + c_offset, layout_.n));
+    const auto *a        = ctx.inputs[0].data() + batch * layout_.a_batch_stride;
+    const auto *b        = ctx.inputs[1].data() + batch * layout_.b_batch_stride;
+    auto       *c        = ctx.outputs[0].data() +
+                           batch * layout_.c_batch_stride * holoflow::core::size_of(a_desc_.dtype);
+    const auto [m, n, k] = std::tuple{layout_.m, layout_.n, layout_.k};
+    if (a_desc_.dtype == DType::CF32) {
+      const auto alpha = make_cuComplex(1.0f, 0.0f);
+      const auto beta  = make_cuComplex(0.0f, 0.0f);
+      CUBLAS_CHECK(cublasCgemm(cublas_.get(), layout_.opb, layout_.opa, n, m, k, &alpha,
+                               reinterpret_cast<const cuFloatComplex *>(b), layout_.ldb,
+                               reinterpret_cast<const cuFloatComplex *>(a), layout_.lda, &beta,
+                               reinterpret_cast<cuFloatComplex *>(c), n));
+    } else if (a_desc_.dtype == DType::F32 && settings_.math_mode == "default") {
+      CUBLAS_CHECK(cublasSgemm(cublas_.get(), layout_.opb, layout_.opa, n, m, k, &alpha_f,
+                               reinterpret_cast<const float *>(b), layout_.ldb,
+                               reinterpret_cast<const float *>(a), layout_.lda, &beta_f,
+                               reinterpret_cast<float *>(c), n));
     } else {
-      const auto *a_complex      = reinterpret_cast<const cuFloatComplex *>(ctx.inputs[0].data());
-      const auto *b_complex      = reinterpret_cast<const cuFloatComplex *>(ctx.inputs[1].data());
-      auto       *c_complex      = reinterpret_cast<cuFloatComplex *>(ctx.outputs[0].data());
-      const cuFloatComplex alpha = make_cuComplex(1.0f, 0.0f);
-      const cuFloatComplex beta  = make_cuComplex(0.0f, 0.0f);
-      CUBLAS_CHECK(cublasCgemm(cublas_.get(), CUBLAS_OP_N, CUBLAS_OP_N, layout_.n, layout_.m,
-                               layout_.k, &alpha, b_complex + b_offset, layout_.n,
-                               a_complex + a_offset, layout_.k, &beta, c_complex + c_offset,
-                               layout_.n));
+      const auto type = a_desc_.dtype == DType::F16 ? CUDA_R_16F : CUDA_R_32F;
+      const auto compute =
+          settings_.math_mode == "fast_f16" ? CUBLAS_COMPUTE_32F_FAST_16F : CUBLAS_COMPUTE_32F;
+      CUBLAS_CHECK(cublasGemmEx(cublas_.get(), layout_.opb, layout_.opa, n, m, k, &alpha_f, b, type,
+                                layout_.ldb, a, type, layout_.lda, &beta_f, c, type, n, compute,
+                                CUBLAS_GEMM_DEFAULT));
     }
   }
 
@@ -170,7 +210,11 @@ holoflow::core::OpResult Matmul::execute(holoflow::core::SyncCtx &ctx) {
 
 holoflow::core::InferResult MatmulFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                                                  const nlohmann::json &jsettings) const {
-  (void)jsettings;
+  const auto settings = jsettings.get<MatmulSettings>();
+  check(settings.math_mode == "default" ||
+            (settings.math_mode == "fast_f16" && !input_descs.empty() &&
+             input_descs[0].dtype == holoflow::core::DType::F32),
+        "unsupported math mode");
   const auto layout = infer_layout(input_descs);
   return holoflow::core::InferResult{.input_descs   = {input_descs[0], input_descs[1]},
                                      .output_descs  = {layout.output_desc},

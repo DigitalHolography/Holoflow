@@ -16,13 +16,15 @@
 
 #include <nlohmann/json.hpp>
 #include <span>
+#include <string>
 
 #include "holoflow/core/tasks.hh"
 
 namespace holonp {
 
 struct MatmulSettings {
-  bool operator==(const MatmulSettings &) const = default;
+  std::string math_mode                                = "default";
+  bool        operator==(const MatmulSettings &) const = default;
 };
 
 void to_json(nlohmann::json &j, const MatmulSettings &s);

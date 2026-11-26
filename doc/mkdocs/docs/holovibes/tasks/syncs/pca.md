@@ -98,3 +98,18 @@ covariance and projection running concurrently.
 ---
 ## Settings
 --8<-- "docs/schemas/syncs/pca_settings.md"
+
+
+## Pipelined matrix operations
+
+The decomposed pipeline flattens each input window to a matrix `X` with features
+on the rows and pixels on the columns. It computes the uncentered product
+`X @ X.T` without subtracting a mean or normalizing. `holoflow.linalg.eigh`
+returns ascending eigenvalues and column eigenvectors. The projection selects
+the requested rows of the transposed eigenvector matrix and multiplies them by X.
+
+`holoflow.matmul` and `@` accept device matrices and batches with matching batch
+shapes. `holoflow.linalg.eigh` accepts contiguous device FP32 matrices and
+supports either authoritative triangle through `UPLO`. The FP16 pipeline
+expresses dtype conversions in the graph. Compiler specialization folds them
+into the matrix products when the supported U8 and FP16 layouts match.

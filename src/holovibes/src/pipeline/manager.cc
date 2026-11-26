@@ -115,6 +115,7 @@
 #include "holotask/syncs/filter2d.hh"
 #include "holotask/syncs/flatfield.hh"
 #include "holotask/syncs/fresnel_diffraction.hh"
+#include "holotask/syncs/matmul_lowering.hh"
 #include "holotask/syncs/mean_abs.hh"
 #include "holotask/syncs/memcpy.hh"
 #include "holotask/syncs/normalize.hh"
@@ -238,6 +239,8 @@ Manager::Manager(
 }
 
 void Manager::register_components() {
+  reg_sync<syncs::EighFactory>(registry_, "Eigh");
+  reg_sync<syncs::FusedMatmulFactory>(registry_, "FusedMatmul");
   reg_sync<syncs::PcaCovarianceFactory>(registry_, "PcaCovariance");
   reg_sync<syncs::SymmetricEigendecompositionFactory>(registry_, "SymmetricEigendecomposition");
   reg_async<asyncs::MultiReaderBatchQueueFactory>(registry_, "MultiReaderBatchQueue");
@@ -895,6 +898,7 @@ void Manager::build_and_run() {
   build_graph_spec(log_root);
 
   CompilerConfig config;
+  config.lower_matmul_tasks = holotask::syncs::lower_matmul_tasks;
   {
     ScopedTrace preparation("Prepare Compiler Configuration");
     {

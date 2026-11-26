@@ -245,10 +245,12 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
     run_pass("Const Deduction", [&] { deduce_const_tasks(); });
 
     std::optional<core::GraphSpec> lowered;
-    if (config_.lower_tasks) {
-      run_pass("Fuse FFT Tasks", [&] {
-        lowered = config_.lower_tasks(out_->graph, registry_);
-        if (lowered) {
+    const auto                     lower = [&](const auto &pass, const char *name) {
+      if (!pass)
+        return;
+      run_pass(name, [&] {
+        if (auto replacement = pass(out_->graph, registry_)) {
+          lowered     = std::move(replacement);
           gspec_      = &*lowered;
           out_->graph = {};
           validate_spec();
@@ -257,7 +259,9 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
           deduce_const_tasks();
         }
       });
-    }
+    };
+    lower(config_.lower_tasks, "Fuse FFT Tasks");
+    lower(config_.lower_matmul_tasks, "Specialize Matrix Multiplication");
 
     run_pass("Tensor IDs", [&] { assign_tensor_ids(); });
     run_pass("Storage Mapping", [&] { assign_storage_ids(); });

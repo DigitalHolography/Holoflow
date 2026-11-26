@@ -54,31 +54,37 @@ template <int K, int Threads> __global__ void gram(const unsigned char *input, f
     multiply(tile + (warp % 2) * 16 * K, tile + (warp / 2) * 16 * K,
              partial + blockIdx.x * 1024 + (warp % 2) * 16 + (warp / 2) * 16 * 32, K, K, 32, K);
 }
-__global__ void reduce(const float *partial, float *matrix, int parts) {
+__global__ void reduce(const float *partial, float *matrix, int parts, bool full) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < 1024) {
     float v = 0;
 #ifdef PCA_F16_LOWER_TRIANGLE
     if (i % 32 < i / 32) {
-      matrix[i] = 0; // HEEV stages the full dense buffer.
+      if (!full)
+        matrix[i] = 0; // HEEV stages the full dense buffer.
       return;
     }
 #endif
     for (int p = 0; p < parts; ++p)
       v += partial[p * 1024 + i];
     matrix[i] = v;
+#ifdef PCA_F16_LOWER_TRIANGLE
+    if (full && i % 32 > i / 32)
+      matrix[(i % 32) * 32 + i / 32] = v;
+#endif
   }
 }
 template <int M, int Threads>
 __global__ void project(const unsigned char *input, const float *vectors, __half *output, int begin,
-                        int components) {
+                        int components, size_t vector_row, size_t vector_col) {
   extern __shared__ __align__(32) cutlass::half_t shared[];
   auto                                            a = shared;
   auto                                            b = a + M * 32;
   for (int i = threadIdx.x; i < M * 32; i += Threads)
     a[i] = cutlass::half_t(float(input[(i % 32) * samples + blockIdx.x * M + i / 32]));
   for (int i = threadIdx.x; i < 32 * 16; i += Threads)
-    b[i] = cutlass::half_t(i / 32 < components ? vectors[(i / 32 + begin) * 32 + i % 32] : 0.f);
+    b[i] = cutlass::half_t(
+        i / 32 < components ? vectors[(i / 32 + begin) * vector_row + (i % 32) * vector_col] : 0.f);
   __shared__ __align__(32) float result[M * 16];
   __syncthreads();
   int warp = threadIdx.x / 32;
@@ -98,12 +104,12 @@ void launch_gram(const void *input, float *partial, cudaStream_t stream) {
       static_cast<const unsigned char *>(input), partial);
 }
 void covariance(const void *input, float *partial, float *matrices, size_t batches,
-                cudaStream_t stream) {
+                cudaStream_t stream, bool full) {
   for (size_t b = 0; b < batches; ++b) {
     launch_gram(static_cast<const unsigned char *>(input) + b * 32 * samples,
                 partial + b * (samples / 512) * 1024, stream);
     reduce<<<4, 256, 0, stream>>>(partial + b * (samples / 512) * 1024, matrices + b * 1024,
-                                  samples / 512);
+                                  samples / 512, full);
   }
   CUDA_CHECK(cudaGetLastError());
 }
@@ -112,7 +118,14 @@ void projection(const void *input, const float *vectors, void *output, size_t ba
   for (size_t b = 0; b < batches; ++b)
     project<256, 256><<<samples / 256, 256, (256 * 32 + 32 * 16) * 2, stream>>>(
         static_cast<const unsigned char *>(input) + b * 32 * samples, vectors + b * 1024,
-        static_cast<__half *>(output) + b * components * samples, begin, components);
+        static_cast<__half *>(output) + b * components * samples, begin, components, 32, 1);
+  CUDA_CHECK(cudaGetLastError());
+}
+void matmul(const void *input, const float *vectors, void *output, int components,
+            size_t vector_row, size_t vector_col, cudaStream_t stream) {
+  project<256, 256><<<samples / 256, 256, (256 * 32 + 32 * 16) * 2, stream>>>(
+      static_cast<const unsigned char *>(input), vectors, static_cast<__half *>(output), 0,
+      components, vector_row, vector_col);
   CUDA_CHECK(cudaGetLastError());
 }
 } // namespace holotask::syncs::pca_f16

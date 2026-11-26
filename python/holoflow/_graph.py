@@ -119,6 +119,24 @@ class Tensor:
     def __radd__(self, other):
         return self._binary(other, "Add", reflected=True)
 
+    def __matmul__(self, other):
+        if not isinstance(other, Tensor):
+            return NotImplemented
+        from ._ops import matmul
+
+        return matmul(self, other)
+
+    def transpose(self, *axes, node_id=None):
+        if len(axes) == 1 and isinstance(axes[0], (tuple, list)):
+            axes = axes[0]
+        if not axes:
+            axes = tuple(reversed(range(len(self.shape))))
+        return operation("Transpose", (self,), {"axes": list(axes)}, node_id)
+
+    @property
+    def T(self):
+        return self.transpose()
+
     def __mul__(self, other):
         return self._binary(other, "Multiply")
 

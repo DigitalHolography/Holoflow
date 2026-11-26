@@ -35,12 +35,14 @@ def pipelined_pca(frames, temporal_frames, capacity, settings):
     x_cov, x_proj = hf.multi_reader_batch_queue(
         frames, max(capacity, 4 * stride), stride, stride, 2, tail="drop", node_id="uploaded_frames",
     )
-    shape = (batch, temporal_frames, *frames.shape[-2:])
-    covariance = hf.pca_covariance(x_cov.reshape(shape, copy=False))
+    height, width = frames.shape[-2:]
+    shape = (batch, temporal_frames, height * width)
+    gram_input = x_cov.reshape(shape, copy=False).astype(hf.float32, node_id="pca_gram_cast")
+    covariance = gram_input @ gram_input.transpose(0, 2, 1)
     covariance = hf.batch_queue(covariance, 2 * batch, batch, batch)
-    vectors = hf.symmetric_eigendecomposition(covariance)
+    _, vectors = hf.linalg.eigh(covariance, UPLO="U")
     vectors = hf.batch_queue(vectors, 2 * batch, batch, batch)
-    return hf.pca_projection(
-        x_proj.reshape(shape, copy=False), vectors, settings["component_begin"],
-        settings["component_end"], use_fused_f16=True,
-    )
+    begin, end = settings["component_begin"], settings["component_end"]
+    coefficients = vectors.astype(hf.float16, node_id="pca_vector_cast").transpose(0, 2, 1)[:, begin:end, :]
+    samples = x_proj.reshape(shape, copy=False).astype(hf.float16, node_id="pca_input_cast")
+    return (coefficients @ samples).reshape((batch, end - begin, height, width), copy=False)

@@ -74,6 +74,42 @@ class AberrationTest(unittest.TestCase):
                         run.start()
                         np.testing.assert_array_equal(run.result(), expected)
 
+    def test_numpy_style_matmul_and_eigh(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "input.holo"
+            write_holo(path, frames=2, width=8, height=8)
+            raw = np.frombuffer(path.read_bytes(), dtype=np.uint16, offset=64)
+            matrix = raw.reshape(2, 8, 8).astype(np.float32) / 128
+
+            def graph():
+                x = hf.sources.holofile(path, batch_size=2, loop=False).to("device")
+                x = x.astype(hf.float32) / 128
+                gram = x @ x.transpose(0, 2, 1)
+                half = x.astype(hf.float16)
+                values_l, vectors_l = hf.linalg.eigh(x)
+                values_u, vectors_u = hf.linalg.eigh(x, UPLO="U")
+                singleton_values, _ = hf.linalg.eigh(x[0, :, :])
+                return tuple(hf.sinks.numpy(y) for y in
+                             (gram, (half @ half.transpose(0, 2, 1)).astype(hf.float32),
+                              values_l, vectors_l, values_u, vectors_u, singleton_values))
+
+            with hf.trace(graph).compile(capture=False) as run:
+                run.start()
+                gram, half_gram, values_l, vectors_l, values_u, vectors_u, singleton_values = run.result()
+            np.testing.assert_allclose(singleton_values, values_l[0], rtol=1e-4, atol=2e-5)
+            np.testing.assert_allclose(gram, matrix @ matrix.transpose(0, 2, 1), rtol=1e-5)
+            half = matrix.astype(np.float16)
+            np.testing.assert_allclose(half_gram, half @ half.transpose(0, 2, 1), rtol=2e-3)
+            for triangle, values, vectors in (("L", values_l, vectors_l), ("U", values_u, vectors_u)):
+                np.testing.assert_allclose(values, np.linalg.eigvalsh(matrix, UPLO=triangle),
+                                           rtol=1e-4, atol=2e-5)
+                triangle_values = np.tril(matrix) if triangle == "L" else np.triu(matrix)
+                symmetric = triangle_values + triangle_values.transpose(0, 2, 1)
+                diagonal = np.arange(8)
+                symmetric[:, diagonal, diagonal] = matrix[:, diagonal, diagonal]
+                np.testing.assert_allclose(symmetric @ vectors, vectors * values[:, None, :],
+                                           rtol=1e-4, atol=2e-5)
+
     def test_complete_aberration_graph(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "input.holo"
@@ -555,9 +591,9 @@ class HolographyDemoTest(unittest.TestCase):
         self.assertNotIn("Pca", by_type)
         queue = by_type["MultiReaderBatchQueue"]
         self.assertEqual((queue["reader_count"], queue["output_stride"]), (2, 128))
-        self.assertIn("PcaCovariance", by_type)
-        self.assertIn("SymmetricEigendecomposition", by_type)
-        self.assertEqual(by_type["PcaProjection"]["output_dtype"], "F16")
+        self.assertEqual(sum(node["type"] == "Matmul" for node in nodes), 2)
+        self.assertEqual(by_type["Eigh"]["uplo"], "U")
+        self.assertNotIn("PcaProjection", by_type)
         self.assertTrue(by_type["FFT2"]["prefer_fp16"])
         self.assertEqual(by_type["DualReaderBatchQueue"]["window_size"], 64)
         self.assertEqual(by_type["Memcpy"]["target"], "Device")
@@ -579,6 +615,37 @@ class HolographyDemoTest(unittest.TestCase):
                     self.assertIn("ShortTimeFresnelDiffraction", by_type)
                     self.assertEqual(by_type["CorrectPhase"].get("output_cf16", False), sm120)
 
+    def test_fused_matmul_returns_full_gram(self):
+        self.write_fp16_fixture(32)
+
+        def graph(shared, smaller):
+            x = hf.sources.holofile(self.root / "fp16.holo", batch_size=32, loop=False)
+            x = x.to("device").reshape((1, 32, 320 * 512), copy=False)
+            x = x.astype(hf.float32, node_id="gram_cast")
+            a = x[:, :, :1024] if smaller else x
+            gram = hf.sinks.numpy(a @ a.transpose(0, 2, 1))
+            return (gram, hf.sinks.numpy(x[:, :1, :1])) if shared else gram
+
+        outputs = []
+        for fuse_tasks, shared, smaller in ((False, False, False), (True, False, False),
+                                             (True, True, False), (True, False, True)):
+            with self.subTest(fuse_tasks=fuse_tasks, shared=shared, smaller=smaller):
+                with hf.trace(graph, shared, smaller).compile(
+                    self.root / "gram", fuse_tasks=fuse_tasks,
+                ) as run:
+                    run.start()
+                    result = run.result()
+                    matrix = result[0] if shared else result
+                    if not smaller:
+                        outputs.append(matrix)
+                    compiled = run.artifacts.compiled_dot.read_text(encoding="utf-8")
+                    fused = fuse_tasks and not smaller
+                    self.assertEqual("FusedMatmul" in compiled, fused)
+                    self.assertEqual("gram_cast" in compiled, shared or not fused)
+                    np.testing.assert_allclose(matrix, matrix.transpose(0, 2, 1), rtol=2e-5)
+        for actual in outputs[1:]:
+            np.testing.assert_allclose(actual, outputs[0], rtol=2e-5)
+
     def test_fp16_finite_playback_drains_and_trims_complete_windows(self):
         from holography_demo.pipeline import pipeline
 
@@ -595,10 +662,20 @@ class HolographyDemoTest(unittest.TestCase):
                 self.assertEqual(len(warning.warnings), 1)
                 self.assertEqual(config.input["end_frame"], 128)
                 self.assertEqual((config.temporal_count, config.output_count), (4, 4))
-                with hf.trace(pipeline, config).compile() as run:
-                    run.start()
-                    self.assertEqual(run.result().shape, (4, 320, 512))
-                    self.assertTrue(run.completed())
+                outputs = []
+                for fuse_tasks in (False, True):
+                    with hf.trace(pipeline, config).compile(
+                        log_dir=self.root / "matmul", fuse_tasks=fuse_tasks,
+                    ) as run:
+                        run.start()
+                        outputs.append(run.result())
+                        self.assertEqual(outputs[-1].shape, (4, 320, 512))
+                        self.assertTrue(run.completed())
+                        compiled = run.artifacts.compiled_dot.read_text(encoding="utf-8")
+                        self.assertEqual("FusedMatmul" in compiled, fuse_tasks)
+                        for name in ("pca_gram_cast", "pca_vector_cast", "pca_input_cast"):
+                            self.assertEqual(name in compiled, not fuse_tasks)
+                np.testing.assert_allclose(*outputs, rtol=1e-2, atol=2e-3)
 
     def test_fp16_fresnel_fuses_and_matches_coarse(self):
         if not hf._native.supports_sm120():
