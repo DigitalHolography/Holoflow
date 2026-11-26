@@ -51,6 +51,8 @@ public:
   void set_resize_algorithm(const QString &algorithm);
   void setChecked(bool checked);
 
+  void set_camera_recording_enabled(bool enabled);
+
   // Control button state
   void set_record_enabled(bool enabled);
   void set_stop_enabled(bool enabled);
@@ -89,6 +91,7 @@ private:
   void connect_signals();
   void update_codec_choices();
   void set_export_controls_enabled(bool enabled);
+  void update_record_queue_count_spin();
 
   QCheckBox   *enable_check_;
   QWidget     *content_container_;
@@ -109,6 +112,8 @@ private:
   QPushButton *record_button_;
   QPushButton *stop_button_;
   QPushButton *stop_fan_button_;
+
+  bool camera_recording_enabled_ = false;
 };
 
 } // namespace holovibes::ui
