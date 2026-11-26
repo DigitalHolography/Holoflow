@@ -638,6 +638,7 @@ void Manager::update_pipeline(const Settings &settings) {
     ScopedTrace scope("Acquire Manager Lock");
     lock.lock();
   }
+  const bool input_source_changed = s_.import_source != settings.import_source;
   {
     ScopedTrace scope("Copy Pipeline Settings");
     s_              = settings;
@@ -681,7 +682,17 @@ void Manager::update_pipeline(const Settings &settings) {
   } catch (const std::exception &e) {
     stop_zernike_history(true);
     settings_dirty_ = true;
-    if (compiler_output_ != nullptr) {
+    if (input_source_changed) {
+      if (scheduler_ && scheduler_->is_running()) {
+        scheduler_->request_stop();
+        scheduler_->wait();
+      }
+      stop_metrics_updates();
+      stop_event_polling();
+#if defined(_WIN32)
+      uninstall_windows_crash_handler();
+#endif
+    } else if (compiler_output_ != nullptr) {
       try {
         run_compiled_graph();
         logger()->warn("[Manager::update_pipeline] New graph failed; resumed previous graph: {}",
