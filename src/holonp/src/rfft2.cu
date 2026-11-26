@@ -116,6 +116,12 @@ public:
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
+  bool supports_cuda_graph() const noexcept override { return true; }
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    holoflow::core::SyncCtx call{ctx.inputs, ctx.outputs, nullptr, nullptr, nullptr};
+    (void)execute(call);
+  }
+
   const holoflow::core::TDesc &idesc() const { return idesc_; }
   const RFFT2Settings         &settings() const { return settings_; }
   void                         update_stream(cudaStream_t stream);

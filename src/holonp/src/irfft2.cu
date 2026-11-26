@@ -33,9 +33,12 @@ namespace holonp {
 
 void to_json(nlohmann::json &j, const IRFFT2Settings &s) {
   j = nlohmann::json{{"axes", s.axes}, {"norm", s.norm}};
+  if (!s.s.empty())
+    j["s"] = s.s;
 }
 
 void from_json(const nlohmann::json &j, IRFFT2Settings &s) {
+  s.s = j.value("s", std::vector<size_t>{});
   if (j.contains("axes"))
     j.at("axes").get_to(s.axes);
   else
@@ -106,27 +109,36 @@ class IRFFT2 : public holoflow::core::ISyncTask {
 public:
   IRFFT2(IRFFT2Settings settings, holoflow::core::TDesc idesc, curaii::CufftHandle &&plan,
          size_t n_fft_elems, size_t total_out_elems, std::vector<size_t> input_offsets,
-         size_t output_stride_bytes, cudaStream_t stream)
+         size_t output_stride_bytes, size_t input_bytes, cudaStream_t stream)
       : settings_(std::move(settings)), idesc_(std::move(idesc)), plan_(std::move(plan)),
         n_fft_elems_(n_fft_elems), total_out_elems_(total_out_elems),
         input_offsets_(std::move(input_offsets)), output_stride_bytes_(output_stride_bytes),
+        input_bytes_(input_bytes), scratch_(curaii::make_unique_device_ptr<uint8_t>(input_bytes)),
         stream_(stream) {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  bool supports_cuda_graph() const noexcept override { return true; }
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    holoflow::core::SyncCtx call{ctx.inputs, ctx.outputs, nullptr, nullptr, nullptr};
+    (void)execute(call);
+  }
 
   const holoflow::core::TDesc &idesc() const { return idesc_; }
   const IRFFT2Settings        &settings() const { return settings_; }
   void                         update_stream(cudaStream_t stream);
 
 private:
-  IRFFT2Settings        settings_;
-  holoflow::core::TDesc idesc_;
-  curaii::CufftHandle   plan_;
-  size_t                n_fft_elems_;
-  size_t                total_out_elems_;
-  std::vector<size_t>   input_offsets_;
-  size_t                output_stride_bytes_;
-  cudaStream_t          stream_;
+  IRFFT2Settings                     settings_;
+  holoflow::core::TDesc              idesc_;
+  curaii::CufftHandle                plan_;
+  size_t                             n_fft_elems_;
+  size_t                             total_out_elems_;
+  std::vector<size_t>                input_offsets_;
+  size_t                             output_stride_bytes_;
+  size_t                             input_bytes_;
+  curaii::unique_device_ptr<uint8_t> scratch_;
+  cudaStream_t                       stream_;
 };
 
 } // namespace
@@ -139,7 +151,9 @@ void IRFFT2::update_stream(cudaStream_t stream) {
 }
 
 holoflow::core::OpResult IRFFT2::execute(holoflow::core::SyncCtx &ctx) {
-  auto *idata_base = reinterpret_cast<uint8_t *>(ctx.inputs[0].data());
+  auto *idata_base = scratch_.get();
+  CUDA_CHECK(cudaMemcpyAsync(idata_base, ctx.inputs[0].data(), input_bytes_,
+                             cudaMemcpyDeviceToDevice, stream_));
   auto *odata_base = reinterpret_cast<uint8_t *>(ctx.outputs[0].data());
 
   for (size_t i = 0; i < input_offsets_.size(); ++i) {
@@ -176,8 +190,12 @@ holoflow::core::InferResult IRFFT2Factory::infer(std::span<const holoflow::core:
   const size_t w_freq = idesc.shape[static_cast<size_t>(axes[1])];
   check(h > 0 && w_freq > 0, "invalid FFT shape");
 
-  const size_t w_real                 = (w_freq - 1) * 2;
-  auto         shape                  = idesc.shape;
+  check(settings.s.empty() || (settings.s.size() == 2 && settings.s[0] == h && settings.s[1] > 0 &&
+                               settings.s[1] / 2 + 1 == w_freq),
+        "s must match the packed spectrum");
+  const size_t w_real = settings.s.empty() ? (w_freq - 1) * 2 : settings.s[1];
+  check(w_real > 0, "output width must be positive");
+  auto shape                          = idesc.shape;
   shape[static_cast<size_t>(axes[1])] = w_real;
 
   holoflow::core::TDesc odesc(shape, holoflow::core::DType::F32, holoflow::core::MemLoc::Device);
@@ -268,8 +286,14 @@ IRFFT2Factory::create(std::span<const holoflow::core::TDesc> input_descs,
                                   static_cast<long long>(n_fft), CUDA_R_32F,
                                   static_cast<long long>(inner_batches), &work_size, CUDA_C_32F));
 
+  // Out-of-place cuFFT C2R may overwrite its input. Preserve the graph tensor,
+  // including when a different consumer reads a view into the same storage.
+  size_t input_bytes = esize;
+  for (size_t i = 0; i < idesc.rank(); ++i)
+    input_bytes += (idesc.shape[i] - 1) * strides_bytes[i];
   return std::unique_ptr<IRFFT2>(new IRFFT2(settings, idesc, std::move(plan), n_fft, total_out,
-                                            std::move(offsets), output_stride_bytes, ctx.stream));
+                                            std::move(offsets), output_stride_bytes, input_bytes,
+                                            ctx.stream));
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>

@@ -20,7 +20,7 @@ from . import _native
 from ._graph import operation
 from ._ops import fftshift as _fftshift
 
-__all__ = ["fft2", "fftshift"]
+__all__ = ["fft2", "fftshift", "rfft2", "irfft2"]
 
 
 def fft2(a, *, axes=(-2, -1), norm=None, prefer_fp16=False, node_id=None):
@@ -50,3 +50,28 @@ def fftshift(x, axes=None, *, node_id=None):
     if not axes:
         return x
     return _fftshift(x, axes=axes, node_id=node_id)
+
+def _real_fft(kind, a, axes, norm, shape, node_id):
+    rank = len(a.shape)
+    axes = tuple(i + rank if i < 0 else i for i in map(index, axes))
+    if rank < 2 or axes != (rank - 2, rank - 1):
+        raise ValueError("real 2-D FFTs support only the last two axes")
+    norm = "backward" if norm is None else norm
+    if norm not in ("backward", "forward", "ortho"):
+        raise ValueError("norm must be None, 'backward', 'forward', or 'ortho'")
+    params = {"axes": [-2, -1], "norm": norm}
+    if shape is not None:
+        params["s"] = list(map(index, shape))
+        if len(params["s"]) != 2 or min(params["s"]) <= 0:
+            raise ValueError("s must contain two positive dimensions")
+    return operation(kind, (a,), params, node_id)
+
+
+def rfft2(a, *, axes=(-2, -1), norm=None, node_id=None):
+    """Transform a device float32 tensor to its packed complex spectrum."""
+    return _real_fft("RFFT2", a, axes, norm, None, node_id)
+
+
+def irfft2(a, s=None, *, axes=(-2, -1), norm=None, node_id=None):
+    """Invert a packed spectrum, optionally specifying its matching spatial shape."""
+    return _real_fft("IRFFT2", a, axes, norm, s, node_id)

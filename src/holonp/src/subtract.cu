@@ -79,6 +79,12 @@ public:
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
+  bool supports_cuda_graph() const noexcept override { return true; }
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    holoflow::core::SyncCtx call{ctx.inputs, ctx.outputs, nullptr, nullptr, nullptr};
+    (void)execute(call);
+  }
+
   const std::vector<holoflow::core::TDesc> &input_descs() const { return input_descs_; }
   void                                      update_stream(cudaStream_t stream) { stream_ = stream; }
 

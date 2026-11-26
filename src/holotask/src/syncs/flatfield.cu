@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <climits>
 #include <cmath>
 #include <cstdlib>
 #include <list>
@@ -854,6 +855,99 @@ FlatfieldFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   logger()->debug("[FlatfieldFactory::update] updating sigma without rebuilding Flatfield task");
   old_flatfield->update_settings(settings, ctx.stream);
   return old_task;
+}
+
+// -------------------------------------------------------------------------------------------------
+// Fused spatial flat-field correction
+// -------------------------------------------------------------------------------------------------
+
+namespace {
+using namespace holoflow::core;
+
+template <bool Vertical>
+__global__ void fused_spatial_pass(const float *image, const float *input, const float *weights,
+                                   float *output, size_t count, size_t height, size_t width,
+                                   int64_t radius) {
+  const size_t idx = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (idx >= count)
+    return;
+
+  const size_t stride = Vertical ? width : 1;
+  const auto   length = static_cast<int64_t>(Vertical ? height : width);
+  const auto   coord  = static_cast<int64_t>(
+      (static_cast<unsigned>(idx) / static_cast<unsigned>(stride)) % static_cast<unsigned>(length));
+  const size_t base = idx - static_cast<size_t>(coord) * stride;
+  float        sum  = 0.0f;
+  for (int64_t tap = -radius; tap <= radius; ++tap) {
+    const int64_t sample  = coord + tap;
+    const auto    clamped = sample < 0 ? 0 : sample >= length ? length - 1 : sample;
+    // The decomposed Multiply rounds before Sum reads each product.
+    const float product =
+        __fmul_rn(input[base + static_cast<size_t>(clamped) * stride], weights[tap + radius]);
+    sum = __fadd_rn(sum, product);
+  }
+  output[idx] = Vertical ? __fsub_rn(image[idx], sum) : sum;
+}
+
+class FusedSpatialFlatfield final : public ISyncTask {
+public:
+  FusedSpatialFlatfield(const TDesc &image, cudaStream_t stream)
+      : temporary_(curaii::make_unique_device_ptr<float>(image.num_elements())), stream_(stream) {}
+
+  bool supports_cuda_graph() const noexcept override { return true; }
+  void record_cuda_graph(CudaGraphCtx &ctx) override {
+    SyncCtx call{ctx.inputs, ctx.outputs, nullptr, nullptr, nullptr};
+    (void)execute(call);
+  }
+
+  OpResult execute(SyncCtx &ctx) override {
+    const auto        &desc   = ctx.inputs[0].desc;
+    const size_t       height = desc.shape[desc.rank() - 2], width = desc.shape.back();
+    const size_t       count = desc.num_elements();
+    constexpr unsigned block = 256;
+    const auto         grid  = static_cast<unsigned>((count - 1) / block + 1);
+    const auto        *image = reinterpret_cast<const float *>(ctx.inputs[0].data());
+    const auto        *wx    = reinterpret_cast<const float *>(ctx.inputs[1].data());
+    const auto        *wy    = reinterpret_cast<const float *>(ctx.inputs[2].data());
+    auto              *out   = reinterpret_cast<float *>(ctx.outputs[0].data());
+    fused_spatial_pass<false><<<grid, block, 0, stream_>>>(
+        image, image, wx, temporary_.get(), count, height, width, ctx.inputs[1].desc.shape[0] / 2);
+    fused_spatial_pass<true><<<grid, block, 0, stream_>>>(
+        image, temporary_.get(), wy, out, count, height, width, ctx.inputs[2].desc.shape[0] / 2);
+    CUDA_CHECK(cudaGetLastError());
+    return OpResult::Ok;
+  }
+
+private:
+  DevPtr<float> temporary_;
+  cudaStream_t  stream_;
+};
+} // namespace
+
+holoflow::core::InferResult FusedSpatialFlatfieldFactory::infer(std::span<const TDesc> inputs,
+                                                                const nlohmann::json &) const {
+  check(inputs.size() == 3, "spatial fusion requires an image and two weight vectors");
+  for (const auto &input : inputs)
+    check(input.dtype == DType::F32 && input.mem_loc == MemLoc::Device &&
+              input.num_elements() > 0 && is_c_contiguous(input),
+          "spatial fusion requires nonempty compact device FP32 inputs");
+  const auto &image = inputs[0];
+  check(image.rank() >= 2 && image.num_elements() <= INT_MAX, "invalid spatial image dimensions");
+  for (const auto &weights : inputs.subspan(1))
+    check(weights.rank() == 1 && weights.shape[0] % 2 == 1, "expected an odd-length weight vector");
+  return {{inputs.begin(), inputs.end()},
+          {TDesc(image.shape, image.dtype, image.mem_loc)},
+          {},
+          {false, false, false},
+          {false},
+          TaskKind::Sync};
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+FusedSpatialFlatfieldFactory::create(std::span<const TDesc> inputs, const nlohmann::json &settings,
+                                     const SyncCreateCtx &ctx) const {
+  (void)infer(inputs, settings);
+  return std::make_unique<FusedSpatialFlatfield>(inputs[0], ctx.stream);
 }
 
 } // namespace holotask::syncs

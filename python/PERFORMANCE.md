@@ -46,7 +46,11 @@ load the non-overlapping tiles and apply the lens without a packing buffer.
 The compiler also fuses Zernike phase synthesis and application when the phase
 map is used only for correction. The fused task can read FP16 samples and write
 complex half directly, with phase math in FP32.
-Sensor averaging, flat-field filtering, slope estimation, and
+The demo selects flat-field filtering at trace time. Smaller kernels use edge
+padding and separable window reductions. Task fusion lowers these operations
+to two clamped filter passes. Larger kernels on 2-D images use a
+real FFT and a Gaussian high-pass gain.
+Sensor averaging, slope estimation, and
 coefficient fitting use dedicated operators. The corrected field is cast to
 complex half on SM120 and stays complex FP32 elsewhere. The FP16 pipeline keeps
 the headless output on the GPU, so its latency ends at GPU output completion. The default `time.precision: fp32` keeps

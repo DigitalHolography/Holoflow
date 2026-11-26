@@ -1,3 +1,17 @@
+// Copyright 2026 Digital Holography Foundation
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "curaii/cuda.hh"
 #include "holonp/argmin.hh"
 #include "holonp/std.hh"
@@ -216,23 +230,19 @@ __global__ void argmin_kernel(const float *input, std::uint16_t *output,
 class Task final : public holoflow::core::ISyncTask {
 public:
   Task(int mode, cudaStream_t stream, ReductionPlan plan)
-      : mode_(mode), stream_(stream), plan_(std::move(plan)) {}
+      : mode_(mode), stream_(stream), plan_(std::move(plan)),
+        output_strides_(upload(plan_.output_strides)), input_strides_(upload(plan_.input_strides)),
+        reduction_strides_(upload(plan_.reduction_strides)),
+        output_to_input_(upload(plan_.output_to_input)), reduction_axes_(upload(plan_.axes)) {}
+
+  bool supports_cuda_graph() const noexcept override { return true; }
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    holoflow::core::SyncCtx call{ctx.inputs, ctx.outputs, nullptr, nullptr, nullptr};
+    (void)execute(call);
+  }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &context) override {
-    auto upload = [&](const auto &values) {
-      using T     = typename std::decay_t<decltype(values)>::value_type;
-      auto device = curaii::make_unique_device_ptr<T>(values.size());
-      CUDA_CHECK(cudaMemcpyAsync(device.get(), values.data(), values.size() * sizeof(T),
-                                 cudaMemcpyHostToDevice, stream_));
-      return device;
-    };
-
-    const auto    output_strides    = upload(plan_.output_strides);
-    const auto    input_strides     = upload(plan_.input_strides);
-    const auto    reduction_strides = upload(plan_.reduction_strides);
-    const auto    output_to_input   = upload(plan_.output_to_input);
-    const auto    reduction_axes    = upload(plan_.axes);
-    constexpr int block_size        = 256;
+    constexpr int block_size = 256;
     const int grid_size = static_cast<int>((plan_.output_elements + block_size - 1) / block_size);
 
     if (mode_ == 3) {
@@ -240,38 +250,48 @@ public:
           reinterpret_cast<const float *>(context.inputs[0].data()),
           reinterpret_cast<std::uint16_t *>(context.outputs[0].data()), plan_.output_elements,
           plan_.reduction_elements, static_cast<int>(plan_.output_shape.size()),
-          static_cast<int>(plan_.axes.size()), output_strides.get(), output_to_input.get(),
-          input_strides.get(), reduction_axes.get(), reduction_strides.get());
+          static_cast<int>(plan_.axes.size()), output_strides_.get(), output_to_input_.get(),
+          input_strides_.get(), reduction_axes_.get(), reduction_strides_.get());
     } else if (mode_ == 0) {
       reduction_kernel<0><<<grid_size, block_size, 0, stream_>>>(
           reinterpret_cast<const float *>(context.inputs[0].data()),
           reinterpret_cast<float *>(context.outputs[0].data()), plan_.output_elements,
           plan_.reduction_elements, static_cast<int>(plan_.output_shape.size()),
-          static_cast<int>(plan_.axes.size()), output_strides.get(), output_to_input.get(),
-          input_strides.get(), reduction_axes.get(), reduction_strides.get());
+          static_cast<int>(plan_.axes.size()), output_strides_.get(), output_to_input_.get(),
+          input_strides_.get(), reduction_axes_.get(), reduction_strides_.get());
     } else if (mode_ == 1) {
       reduction_kernel<1><<<grid_size, block_size, 0, stream_>>>(
           reinterpret_cast<const float *>(context.inputs[0].data()),
           reinterpret_cast<float *>(context.outputs[0].data()), plan_.output_elements,
           plan_.reduction_elements, static_cast<int>(plan_.output_shape.size()),
-          static_cast<int>(plan_.axes.size()), output_strides.get(), output_to_input.get(),
-          input_strides.get(), reduction_axes.get(), reduction_strides.get());
+          static_cast<int>(plan_.axes.size()), output_strides_.get(), output_to_input_.get(),
+          input_strides_.get(), reduction_axes_.get(), reduction_strides_.get());
     } else {
       reduction_kernel<2><<<grid_size, block_size, 0, stream_>>>(
           reinterpret_cast<const float *>(context.inputs[0].data()),
           reinterpret_cast<float *>(context.outputs[0].data()), plan_.output_elements,
           plan_.reduction_elements, static_cast<int>(plan_.output_shape.size()),
-          static_cast<int>(plan_.axes.size()), output_strides.get(), output_to_input.get(),
-          input_strides.get(), reduction_axes.get(), reduction_strides.get());
+          static_cast<int>(plan_.axes.size()), output_strides_.get(), output_to_input_.get(),
+          input_strides_.get(), reduction_axes_.get(), reduction_strides_.get());
     }
     CUDA_CHECK(cudaGetLastError());
     return holoflow::core::OpResult::Ok;
   }
 
 private:
-  int           mode_;
-  cudaStream_t  stream_;
-  ReductionPlan plan_;
+  template <typename T> curaii::unique_device_ptr<T> upload(const std::vector<T> &values) {
+    auto device = curaii::make_unique_device_ptr<T>(values.size());
+    if (!values.empty())
+      CUDA_CHECK(cudaMemcpyAsync(device.get(), values.data(), values.size() * sizeof(T),
+                                 cudaMemcpyHostToDevice, stream_));
+    return device;
+  }
+
+  int                                     mode_;
+  cudaStream_t                            stream_;
+  ReductionPlan                           plan_;
+  curaii::unique_device_ptr<std::int64_t> output_strides_, input_strides_, reduction_strides_;
+  curaii::unique_device_ptr<int>          output_to_input_, reduction_axes_;
 };
 
 template <class SettingsType>

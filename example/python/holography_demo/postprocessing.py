@@ -3,6 +3,9 @@
 
 """Apply flat-field correction and prepare reconstruction images."""
 
+from ctypes import c_float
+from math import ceil, isfinite, pi
+
 import holoflow as hf
 
 
@@ -18,9 +21,36 @@ def flatfield(image, cutoff_m, space, propagated):
         sample_spacing_y_m = fresnel_sampling_span_m / height
         sample_spacing_x_m = fresnel_sampling_span_m / width
     gaussian_width_m = 0.187 * cutoff_m
-    return hf.flatfield(
+    return flatfield_decomposed(
         image, gaussian_width_m / sample_spacing_y_m, gaussian_width_m / sample_spacing_x_m
     )
+
+
+def flatfield_decomposed(image, sigma_y, sigma_x):
+    sigma_y, sigma_x = c_float(sigma_y).value, c_float(sigma_x).value
+    if not all(isfinite(sigma) and sigma > 0 for sigma in (sigma_y, sigma_x)):
+        raise ValueError("flatfield sigmas must be finite and positive")
+    height, width = image.shape[-2:]
+    radius_y, radius_x = (ceil(c_float(3 * sigma).value) for sigma in (sigma_y, sigma_x))
+    if height > 1 and width > 1 and max(radius_y, radius_x) >= 32:
+        fx = hf.arange(0, width // 2 + 1) / width
+        fy = ((hf.arange(0, height) + height // 2) % height - height // 2) / height
+        fx, fy = hf.meshgrid(fx, fy)
+        exponent = -2 * pi**2 * (hf.square(sigma_x * fx) + hf.square(sigma_y * fy))
+        gain = 1 - hf.exp(exponent)
+        return hf.fft.irfft2(hf.fft.rfft2(image) * gain, s=(height, width))
+
+    background = image
+    for axis, radius, sigma in ((-1, radius_x, sigma_x), (-2, radius_y, sigma_y)):
+        offsets = hf.arange(-radius, radius + 1)
+        weights = hf.exp(-0.5 * hf.square(offsets / sigma))
+        weights = weights / hf.sum(weights, keepdims=True)
+        widths = [(0, 0)] * len(image.shape)
+        widths[axis] = (radius, radius)
+        padded = hf.pad(background, widths, mode="edge")
+        windows = hf.sliding_window_view(padded, 2 * radius + 1, axis=axis)
+        background = hf.sum(windows * weights, axis=-1)
+    return image - background
 
 
 def postprocess_image(image, config, propagated):

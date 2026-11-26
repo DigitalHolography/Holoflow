@@ -6,6 +6,7 @@
 #include "finite_graph.hh"
 #include "latency.hh"
 #include "phase_fusion.hh"
+#include "spatial_flatfield_fusion.hh"
 #include "throughput.hh"
 #include <algorithm>
 #include <condition_variable>
@@ -32,6 +33,7 @@
 #include "holonp/exp.hh"
 #include "holonp/fft2.hh"
 #include "holonp/fftshift.hh"
+#include "holonp/irfft2.hh"
 #include "holonp/matmul.hh"
 #include "holonp/max.hh"
 #include "holonp/mean.hh"
@@ -40,10 +42,13 @@
 #include "holonp/multiply.hh"
 #include "holonp/remainder.hh"
 #include "holonp/reshape.hh"
+#include "holonp/rfft2.hh"
 #include "holonp/slice.hh"
 #include "holonp/square.hh"
 #include "holonp/subtract.hh"
+#include "holonp/sum.hh"
 #include "holonp/transpose.hh"
+#include "holonp/window_ops.hh"
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/pca_decomposition_queue.hh"
@@ -101,6 +106,8 @@ public:
 std::unique_ptr<hc::Registry> make_registry(bool include_lowered_tasks = false) {
   auto r = std::make_unique<hc::Registry>();
   if (include_lowered_tasks) {
+    r->register_sync("FusedSpatialFlatfield",
+                     std::make_unique<holotask::syncs::FusedSpatialFlatfieldFactory>());
     r->register_sync("FusedPhaseCorrection",
                      std::make_unique<holotask::syncs::FusedPhaseCorrectionFactory>());
     r->register_sync("FusedFFT2", std::make_unique<holoflow::python::FusedFft2Factory>(*r));
@@ -118,6 +125,11 @@ std::unique_ptr<hc::Registry> make_registry(bool include_lowered_tasks = false) 
   r->register_sync("Subtract", std::make_unique<holonp::SubtractFactory>());
   r->register_sync("Divide", std::make_unique<holonp::DivideFactory>());
   r->register_sync("Filter2D", std::make_unique<holotask::syncs::Filter2DFactory>());
+  r->register_sync("Pad", std::make_unique<holonp::PadFactory>());
+  r->register_sync("SlidingWindowView", std::make_unique<holonp::SlidingWindowViewFactory>());
+  r->register_sync("Sum", std::make_unique<holonp::SumFactory>());
+  r->register_sync("RFFT2", std::make_unique<holonp::RFFT2Factory>());
+  r->register_sync("IRFFT2", std::make_unique<holonp::IRFFT2Factory>());
   r->register_sync("Flatfield", std::make_unique<holotask::syncs::FlatfieldFactory>());
   r->register_sync("Matmul", std::make_unique<holonp::MatmulFactory>());
   r->register_sync("Eigh", std::make_unique<holotask::syncs::EighFactory>());
@@ -226,10 +238,12 @@ public:
                 .enable_profiling    = false,
                 .lower_tasks         = fuse_tasks ? holoflow::python::lower_fft_tasks : nullptr,
                 .lower_matmul_tasks  = fuse_tasks ? holotask::syncs::lower_matmul_tasks : nullptr,
-                .lower_phase_tasks = fuse_tasks ? holoflow::python::lower_phase_tasks : nullptr})) {
+                .lower_phase_tasks   = fuse_tasks ? holoflow::python::lower_phase_tasks : nullptr,
+                .lower_spatial_flatfield_tasks =
+                    fuse_tasks ? holoflow::python::lower_spatial_flatfield_tasks : nullptr})) {
     for (const auto v : boost::make_iterator_range(vertices(spec))) {
       if (spec[v].kind == "FusedFFT2" || spec[v].kind == "FusedMatmul" ||
-          spec[v].kind == "FusedPhaseCorrection")
+          spec[v].kind == "FusedPhaseCorrection" || spec[v].kind == "FusedSpatialFlatfield")
         throw std::invalid_argument(spec[v].kind + " is an internal compiler task");
       node_ids_.insert(spec[v].name);
     }

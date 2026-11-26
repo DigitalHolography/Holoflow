@@ -263,6 +263,7 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
     lower(config_.lower_tasks, "Fuse FFT Tasks");
     lower(config_.lower_matmul_tasks, "Specialize Matrix Multiplication");
     lower(config_.lower_phase_tasks, "Fuse Phase Correction");
+    lower(config_.lower_spatial_flatfield_tasks, "Fuse Spatial Flatfield");
 
     run_pass("Tensor IDs", [&] { assign_tensor_ids(); });
     run_pass("Storage Mapping", [&] { assign_storage_ids(); });

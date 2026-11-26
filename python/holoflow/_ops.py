@@ -293,3 +293,22 @@ def copy(x, *, node_id=None):
 
 def wrap2pi(x, *, node_id=None):
     return operation("Wrap2Pi", (x,), {}, node_id)
+
+def pad(x, pad_width, mode="edge", *, node_id=None):
+    """Edge-pad a device float32 tensor with a (before, after) pair per axis."""
+    return operation("Pad", (x,), {"pad_width": [list(pair) for pair in pad_width],
+                                   "mode": mode}, node_id)
+
+
+def sliding_window_view(x, window_shape, *, axis, node_id=None):
+    """Make a read-only view with a single window dimension appended."""
+    return operation("SlidingWindowView", (x,), {"window_shape": index(window_shape),
+                                                 "axis": index(axis)}, node_id)
+
+
+def sum(x, axis=None, keepdims=False, *, node_id=None):
+    """Sum along the specified axes of a device float32 tensor."""
+    axes = [] if axis is None else list(axis) if isinstance(axis, tuple) else [index(axis)]
+    if axis == ():
+        return x
+    return operation("Sum", (x,), {"axis": axes, "keepdims": keepdims}, node_id)

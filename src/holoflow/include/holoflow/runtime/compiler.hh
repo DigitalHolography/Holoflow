@@ -60,6 +60,8 @@ public:
         lower_matmul_tasks;
     std::function<std::optional<core::GraphSpec>(const GraphPlan &, const core::Registry &)>
         lower_phase_tasks;
+    std::function<std::optional<core::GraphSpec>(const GraphPlan &, const core::Registry &)>
+        lower_spatial_flatfield_tasks;
   };
 
   explicit Compiler(core::Registry &registry, Config config = {});

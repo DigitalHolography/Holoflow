@@ -127,6 +127,12 @@ public:
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
+  bool supports_cuda_graph() const noexcept override { return true; }
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    holoflow::core::SyncCtx call{ctx.inputs, ctx.outputs, nullptr, nullptr, nullptr};
+    (void)execute(call);
+  }
+
   const std::array<holoflow::core::TDesc, 2> &idescs() const { return idescs_; }
   const MultiplySettings                     &settings() const { return settings_; }
   void update_stream(cudaStream_t stream) { stream_ = stream; }

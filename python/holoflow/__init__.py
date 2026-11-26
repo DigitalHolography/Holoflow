@@ -65,3 +65,5 @@ from ._ops import filter2d, flatfield, pct_clip
 from ._ops import (short_time_fresnel_diffraction, causal_sliding_average,
                    shack_hartmann_slopes, zernike_from_slopes, zernike_phase,
                    correct_phase, normalize, transpose, copy, wrap2pi)
+
+from ._ops import pad, sliding_window_view, sum

@@ -224,7 +224,8 @@ class HolographyDemoTest(unittest.TestCase):
         from holography_demo.pipeline import pipeline
 
         def trace_reference(config):
-            with patch("holography_demo.pipeline.correct_aberration", correct_aberration_native):
+            with (patch("holography_demo.pipeline.correct_aberration", correct_aberration_native),
+                  patch("holography_demo.postprocessing.flatfield_decomposed", hf.flatfield)):
                 return hf.trace(pipeline, config)
 
         reference = Path(__file__).resolve().parents[2] / "example/python/holography_cao.yaml"
@@ -388,15 +389,115 @@ class HolographyDemoTest(unittest.TestCase):
                 self.assertEqual(spec["nodes"]["spatial_filter"]["type"], "Filter2D")
                 self.assertTrue(any(e["from"] == "spatial_filter" and e["to"] == "propagation_windows"
                                     for e in spec["edges"]))
-                flatfield, = [n["params"] for n in spec["nodes"].values() if n["type"] == "Flatfield"]
+                self.assertNotIn("Flatfield", {n["type"] for n in spec["nodes"].values()})
+                pads = [n["params"]["pad_width"] for n in spec["nodes"].values() if n["type"] == "Pad"]
                 pitch = config.space["pixel_pitch_m"]
                 if method == "fresnel":
                     pitch = config.space["wavelength_m"] * config.space["distance_m"] / (20 * pitch)
-                np.testing.assert_allclose([flatfield["sigma_y"], flatfield["sigma_x"]],
-                                           0.187 * 0.001 / pitch, rtol=1e-6)
+                radius = int(np.ceil(3 * 0.187 * 0.001 / pitch))
+                self.assertEqual(sorted(widths[-2:] for widths in pads),
+                                 [[[0, 0], [radius, radius]], [[radius, radius], [0, 0]]])
                 with graph.compile() as run:
                     run.start()
                     self.assertEqual(run.result().shape, (8, 20, 20))
+
+    def test_decomposed_flatfield_matches_native_and_numpy(self):
+        from holography_demo.postprocessing import flatfield_decomposed
+
+        cases = ((16, 21, 0.75, 10.2, False), (16, 21, 1.25, 10.5, True),
+                 (15, 20, 12, 4, True), (1, 12, 11, 0.75, False))
+        for height, width, sy, sx, fft in cases:
+            with self.subTest(shape=(height, width), sigmas=(sy, sx)):
+                path = self.root / f"flatfield_{height}_{width}.holo"
+                write_holo(path, frames=6, width=width, height=height)
+                impulse = np.zeros((height, width), dtype="<u2")
+                impulse[0, 0] = 4096
+                with path.open("r+b") as source:
+                    source.seek(64)
+                    source.write(impulse.tobytes())
+
+                def pipeline():
+                    x = hf.sources.holofile(path, batch_size=2, loop=False).to("device").astype(hf.float32)
+                    return tuple(hf.sinks.numpy(out) for out in
+                                 (x, hf.flatfield(x, sy, sx), flatfield_decomposed(x, sy, sx)))
+
+                graph = hf.trace(pipeline)
+                kinds = {node["type"] for node in graph.to_json()["nodes"].values()}
+                self.assertEqual("RFFT2" in kinds, fft)
+                self.assertEqual("SlidingWindowView" in kinds, not fft)
+                results = []
+                for enabled in (False, True):
+                    with graph.compile(log_dir=self.root / "flatfield_compare", capture=False,
+                                       fuse_tasks=enabled) as run:
+                        run.start()
+                        results.append(run.result())
+                        dot = run.artifacts.compiled_dot.read_text(encoding="utf-8")
+                    self.assertEqual("(FusedSpatialFlatfield)" in dot, enabled and not fft)
+                    if fft:
+                        self.assertIn("(IRFFT2)", dot)
+                x, native, actual = results[1]
+                np.testing.assert_array_equal(actual, results[0][2])
+                if fft:
+                    fx = np.fft.rfftfreq(width)
+                    fy = np.fft.fftfreq(height)[:, None]
+                    gain = 1 - np.exp(-2 * np.pi**2 * ((sx * fx)**2 + (sy * fy)**2))
+                    expected = np.fft.irfft2(np.fft.rfft2(x) * gain, s=(height, width), axes=(-2, -1))
+                else:
+                    background = x.astype(np.float64)
+                    for axis, sigma in ((-1, sx), (-2, sy)):
+                        radius = int(np.ceil(3 * sigma))
+                        weights = np.exp(-0.5 * (np.arange(-radius, radius + 1) / sigma)**2)
+                        weights /= weights.sum()
+                        background = np.apply_along_axis(
+                            lambda row: np.convolve(np.pad(row, radius, mode="edge"), weights, "valid"),
+                            axis, background)
+                    expected = x - background
+                np.testing.assert_allclose(actual, expected, rtol=2e-4, atol=0.004)
+                np.testing.assert_allclose(actual, native, rtol=2e-4, atol=0.004)
+
+    def test_spatial_flatfield_fusion_keeps_shared_horizontal_output(self):
+        from holography_demo.postprocessing import flatfield_decomposed
+
+        path = self.root / "shared_flatfield.holo"
+        write_holo(path, frames=6, width=21, height=16)
+        primitive_sum = hf.sum
+
+        def pipeline():
+            x = hf.sources.holofile(path, batch_size=2, loop=False).to("device").astype(hf.float32)
+            passes = []
+
+            def collect_pass(value, *args, **kwargs):
+                out = primitive_sum(value, *args, **kwargs)
+                if len(out.shape) == len(x.shape):
+                    passes.append(out)
+                return out
+
+            with patch.object(hf, "sum", collect_pass):
+                corrected = flatfield_decomposed(x, 0.75, 1.25)
+            return hf.sinks.numpy(corrected), hf.sinks.numpy(passes[0])
+
+        with hf.trace(pipeline).compile(log_dir=self.root / "shared_flatfield", capture=False) as run:
+            run.start()
+            corrected, horizontal = run.result()
+            dot = run.artifacts.compiled_dot.read_text(encoding="utf-8")
+        self.assertNotIn("(FusedSpatialFlatfield)", dot)
+        self.assertEqual(corrected.shape, horizontal.shape)
+
+    def test_real_fft_preserves_shared_spectrum(self):
+        path = self.root / "odd_fft.holo"
+        write_holo(path, frames=6, width=21, height=16)
+
+        def pipeline():
+            x = hf.sources.holofile(path, batch_size=2, loop=False).to("device").astype(hf.float32)
+            spectrum = hf.fft.rfft2(x)
+            restored = hf.fft.irfft2(spectrum, s=(16, 21))
+            return tuple(hf.sinks.numpy(out) for out in (restored, spectrum, x))
+
+        with hf.trace(pipeline).compile() as run:
+            run.start()
+            restored, spectrum, x = run.result()
+        np.testing.assert_allclose(restored, x, rtol=1e-5, atol=0.002)
+        np.testing.assert_allclose(spectrum, np.fft.rfft2(x), rtol=2e-4, atol=0.01)
 
     def test_decomposed_aberration_matches_native_stages(self):
         from holography_demo import aberration_ops

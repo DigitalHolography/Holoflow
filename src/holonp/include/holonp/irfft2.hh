@@ -41,8 +41,9 @@ void from_json(const nlohmann::json &j, FftNorm &norm);
 // -------------------------------------------------------------------------------------------------
 
 struct IRFFT2Settings {
-  std::vector<int> axes;
-  FftNorm          norm = FftNorm::Backward;
+  std::vector<int>    axes;
+  FftNorm             norm = FftNorm::Backward;
+  std::vector<size_t> s;
 
   bool operator==(const IRFFT2Settings &) const = default;
 };
