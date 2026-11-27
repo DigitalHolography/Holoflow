@@ -58,6 +58,7 @@
 #include <QVBoxLayout>
 #include <QtConcurrent>
 #include <algorithm>
+#include <numeric>
 #include <array>
 #include <cmath>
 #include <filesystem>
@@ -495,10 +496,11 @@ void MainWindow::setup_main_layout() {
   session_layout->addWidget(update_indicator_);
   main_layout->addWidget(session_bar, 0);
 
-  render_widget_ = new ImageRenderingWidget(this);
-  view_widget_   = new ViewWidget(this);
-  import_widget_ = new ImportWidget(this);
-  export_widget_ = new ExportWidget(this);
+  render_widget_          = new ImageRenderingWidget(this);
+  pipeline_queues_widget_ = new PipelineQueuesWidget(this);
+  view_widget_            = new ViewWidget(this);
+  import_widget_          = new ImportWidget(this);
+  export_widget_          = new ExportWidget(this);
 
   auto *command_bar = new QFrame(central_widget);
   command_bar->setObjectName("commandBar");
@@ -582,6 +584,7 @@ void MainWindow::setup_main_layout() {
   processing_layout->setContentsMargins(0, 0, 0, 0);
   processing_layout->setSpacing(12);
   processing_layout->addWidget(render_widget_);
+  processing_layout->addWidget(pipeline_queues_widget_);
   processing_layout->addWidget(render_widget_->autofocus_widget());
   processing_layout->addStretch(1);
 
@@ -1401,6 +1404,9 @@ void MainWindow::connect_manager_signals() {
   connect(pipeline_manager_, &pipeline::Manager::raw_record_flushing_finished, this,
           &MainWindow::on_raw_record_flushing_finished);
 
+  connect(pipeline_manager_, &pipeline::Manager::memory_metrics_updated, this,
+          &MainWindow::on_memory_metrics_updated, Qt::QueuedConnection);
+
   connect(pipeline_manager_, &pipeline::Manager::metrics_updated, this,
           &MainWindow::on_metrics_updated, Qt::QueuedConnection);
 
@@ -1817,6 +1823,24 @@ void MainWindow::reset_pipeline_ui_after_stop() {
   record_widget_->reset(export_widget_->get_queue_count());
 }
 
+void MainWindow::on_memory_metrics_updated(qulonglong used_vram, qulonglong total_vram,
+                                          qulonglong used_ram, qulonglong total_ram,
+                                          qulonglong frame_bytes,
+                                          qulonglong target_frames_per_batch) {
+  constexpr double gib = 1024.0 * 1024 * 1024;
+  monitor_widget_->set_vram_usage(
+      QStringLiteral("%1 / %2 GiB")
+          .arg(static_cast<double>(used_vram) / gib, 0, 'f', 2)
+          .arg(static_cast<double>(total_vram) / gib, 0, 'f', 2));
+  monitor_widget_->set_ram_usage(
+      QStringLiteral("%1 / %2 GiB")
+          .arg(static_cast<double>(used_ram) / gib, 0, 'f', 2)
+          .arg(static_cast<double>(total_ram) / gib, 0, 'f', 2));
+  const double batch_bytes = static_cast<double>(frame_bytes) *
+                             static_cast<double>(target_frames_per_batch);
+  monitor_widget_->set_batch_info(batch_bytes, target_frames_per_batch);
+}
+
 void MainWindow::on_metrics_updated(double input_fps) {
   if (input_fps < 0.0) {
     input_fps = 0.0;
@@ -1837,8 +1861,7 @@ void MainWindow::on_metrics_updated(double input_fps) {
   monitor_widget_->set_input_throughput_bytes("N/A");
   monitor_widget_->set_cpu_throughput("N/A");
   monitor_widget_->set_gpu_throughput("N/A");
-  monitor_widget_->set_ram_usage("N/A");
-  monitor_widget_->set_vram_usage("N/A");
+
   monitor_widget_->set_dropped_frames("N/A");
   monitor_widget_->set_pipeline_latency("N/A");
   refresh_command_bar();
@@ -2112,6 +2135,10 @@ void MainWindow::on_raw_record_stopped_failure(const QString &error, std::option
 }
 
 bool MainWindow::validate_inputs() {
+  const auto shares = pipeline_queues_widget_->memory_share_plan();
+  if (std::accumulate(shares.begin(), shares.end(), 0) > 100) {
+    return false;
+  }
   import_widget_->clear_validation_styles();
   export_widget_->clear_validation_styles();
   render_widget_->clear_validation_styles();
@@ -2129,7 +2156,7 @@ bool MainWindow::validate_inputs() {
   pipeline::Settings settings = get_pipeline_settings();
   export_widget_->set_frame_batch_size(settings.recording_method == pipeline::RecordingMethod::RAW
                                            ? settings.load_batch
-                                           : settings.cpu_out_size);
+                                           : 1);
   const auto context             = build_validation_context(settings);
   int        max_temporal_frames = std::numeric_limits<int>::max();
   if (settings.import_source == pipeline::ImportSource::HOLOFILE &&
@@ -2354,12 +2381,15 @@ void MainWindow::setup_validation_connections() {
   connect(import_widget_, &ImportWidget::settings_changed, this, cb);
   connect(export_widget_, &ExportWidget::settings_changed, this, cb);
   connect(render_widget_, &ImageRenderingWidget::settings_changed, this, cb);
+  connect(pipeline_queues_widget_, &PipelineQueuesWidget::settings_changed, this, cb);
   connect(view_widget_, &ViewWidget::settings_changed, this, cb);
   connect(display_workspace_, &VisualizationWorkspace::visualization_preferences_changed, this, cb);
 
   connect(import_widget_, &ImportWidget::settings_changed, this, &MainWindow::refresh_command_bar);
   connect(export_widget_, &ExportWidget::settings_changed, this, &MainWindow::refresh_command_bar);
   connect(render_widget_, &ImageRenderingWidget::settings_changed, this,
+          &MainWindow::refresh_command_bar);
+  connect(pipeline_queues_widget_, &PipelineQueuesWidget::settings_changed, this,
           &MainWindow::refresh_command_bar);
   connect(view_widget_, &ViewWidget::settings_changed, this, &MainWindow::refresh_command_bar);
   connect(display_workspace_, &VisualizationWorkspace::visualization_preferences_changed, this,
@@ -2368,6 +2398,8 @@ void MainWindow::setup_validation_connections() {
 
 void MainWindow::setup_update_connections() {
   auto cb = [this]() {
+    const auto shares = pipeline_queues_widget_->memory_share_plan();
+    if (std::accumulate(shares.begin(), shares.end(), 0) > 100) return;
     update_if_running();
     monitor_widget_->reset_pipeline_progress_bar();
     export_widget_->set_camera_recording_enabled(import_widget_->is_camera_mode());
@@ -2380,6 +2412,7 @@ void MainWindow::setup_update_connections() {
           [this]() { record_widget_->reset(export_widget_->get_queue_count()); });
 
   connect(render_widget_, &ImageRenderingWidget::settings_changed, this, cb);
+  connect(pipeline_queues_widget_, &PipelineQueuesWidget::settings_changed, this, cb);
   connect(view_widget_, &ViewWidget::settings_changed, this, cb);
   connect(display_workspace_, &VisualizationWorkspace::visualization_preferences_changed, this, cb);
 
@@ -2499,11 +2532,11 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
 
   // Advanced Settings
   {
-    s.cpu_in_size  = 1024; // TODO unused ?
-    s.gpu_in_size  = 16;
-    s.cpu_rec_size = 1024; // TODO unused ?
-    s.cpu_out_size = 4;
-    s.gpu_out_size = 2;
+    s.queue_sizing_auto = pipeline_queues_widget_->is_queue_sizing_auto();
+    s.max_vram_percent = pipeline_queues_widget_->max_vram_percent();
+    s.max_ram_percent = pipeline_queues_widget_->max_ram_percent();
+    s.target_frames_per_batch = pipeline_queues_widget_->target_frames_per_batch();
+    s.memory_share_plan = pipeline_queues_widget_->memory_share_plan();
   }
 
   // Import Settings
@@ -2732,7 +2765,9 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
 
   // --- Advanced Settings ---
   {
-    // (none exposed in UI)
+    pipeline_queues_widget_->set_queue_sizing_auto(s.queue_sizing_auto);
+    pipeline_queues_widget_->set_planner_settings(s.max_vram_percent, s.max_ram_percent,
+                                                  s.target_frames_per_batch, s.memory_share_plan);
   }
 
   // --- Import Settings ---

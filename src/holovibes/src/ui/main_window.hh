@@ -36,6 +36,7 @@
 #include "pipeline/validation.hh"
 #include "ui/widgets/export_widget.hh"
 #include "ui/widgets/image_rendering_widget.hh"
+#include "ui/widgets/pipeline_queues_widget.hh"
 #include "ui/widgets/import_widget.hh"
 #include "ui/widgets/record_monitor_widget.hh"
 #include "ui/widgets/system_monitor_widget.hh"
@@ -62,6 +63,9 @@ private slots:
   void on_import_start_clicked();
   void on_import_stop_clicked();
   void on_metrics_updated(double input_fps);
+  void on_memory_metrics_updated(qulonglong used_vram, qulonglong total_vram,
+                                 qulonglong used_ram, qulonglong total_ram,
+                                 qulonglong frame_bytes, qulonglong target_frames_per_batch);
   void on_export_record_clicked();
   void on_export_stop_clicked();
   void on_raw_record_started_success();
@@ -73,6 +77,7 @@ private:
   ImportWidget                *import_widget_;
   ExportWidget                *export_widget_;
   ImageRenderingWidget        *render_widget_;
+  PipelineQueuesWidget        *pipeline_queues_widget_;
   ViewWidget                  *view_widget_;
   SystemMonitorWidget         *monitor_widget_;
   RecordMonitorWidget         *record_widget_;

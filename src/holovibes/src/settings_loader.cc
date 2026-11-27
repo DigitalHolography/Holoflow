@@ -99,9 +99,11 @@ using json = nlohmann::json;
 void write_advanced(json &j, const Settings &s) {
   auto &advanced = j["compute_settings"]["advanced"];
 
-  advanced["buffer_size"]["input"]  = s.gpu_in_size;
-  advanced["buffer_size"]["output"] = s.gpu_out_size;
-  advanced["buffer_size"]["record"] = s.cpu_rec_size;
+  advanced["buffer_size"]["auto"] = s.queue_sizing_auto;
+  advanced["buffer_size"]["max_vram_percent"] = s.max_vram_percent;
+  advanced["buffer_size"]["max_ram_percent"] = s.max_ram_percent;
+  advanced["buffer_size"]["target_frames_per_batch"] = s.target_frames_per_batch;
+  advanced["buffer_size"]["memory_share_plan"] = s.memory_share_plan;
 
   advanced["filter2d_smooth"]["low"]  = s.filter_smooth_inner;
   advanced["filter2d_smooth"]["high"] = s.filter_smooth_outer;
@@ -191,7 +193,6 @@ void write_view(json &j, const Settings &s) {
 void write_info(json &j, const Settings &s) {
   auto &info = j["info"];
 
-  info["contiguous"]       = s.cpu_rec_size;
   info["pixel_pitch"]["x"] = s.spacial_pixel_size;
   info["pixel_pitch"]["y"] = s.spacial_pixel_size;
 }
@@ -200,9 +201,13 @@ void read_advanced(Settings &s, const json &advanced) {
   const auto &buffer_size = child_or_empty(advanced, "buffer_size");
   const auto &smooth      = child_or_empty(advanced, "filter2d_smooth");
 
-  s.gpu_in_size  = val(buffer_size, "input", s.gpu_in_size);
-  s.gpu_out_size = val(buffer_size, "output", s.gpu_out_size);
-  s.cpu_rec_size = val(buffer_size, "record", s.cpu_rec_size);
+  s.queue_sizing_auto = val(buffer_size, "auto", s.queue_sizing_auto);
+  s.max_vram_percent = val(buffer_size, "max_vram_percent", s.max_vram_percent);
+  s.max_ram_percent = val(buffer_size, "max_ram_percent", s.max_ram_percent);
+  s.target_frames_per_batch = val(buffer_size, "target_frames_per_batch", s.target_frames_per_batch);
+  if (buffer_size.contains("memory_share_plan") && buffer_size.at("memory_share_plan").is_array() &&
+      buffer_size.at("memory_share_plan").size() == s.memory_share_plan.size())
+    s.memory_share_plan = buffer_size.at("memory_share_plan").get<std::array<int, 6>>();
 
   s.filter_smooth_inner = val(smooth, "low", s.filter_smooth_inner);
   s.filter_smooth_outer = val(smooth, "high", s.filter_smooth_outer);

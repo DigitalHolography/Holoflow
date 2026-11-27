@@ -19,6 +19,11 @@
 #include <QStandardPaths>
 #include <QThread>
 #include <QTimer>
+#include <cuda_runtime.h>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 
 #include <algorithm>
 #include <chrono>
@@ -811,6 +816,16 @@ void Manager::stop_metrics_updates() {
 }
 
 void Manager::poll_metrics() {
+  size_t free_vram = 0, total_vram = 0;
+  if (cudaMemGetInfo(&free_vram, &total_vram) == cudaSuccess) {
+    MEMORYSTATUSEX memory{};
+    memory.dwLength = static_cast<DWORD>(sizeof(memory));
+    if (GlobalMemoryStatusEx(&memory))
+      emit memory_metrics_updated(total_vram - free_vram, total_vram,
+                                  memory.ullTotalPhys - memory.ullAvailPhys,
+                                  memory.ullTotalPhys, planned_frame_bytes_,
+                                  effective_batch_frames_);
+  }
   if (!scheduler_ || !scheduler_->is_running()) {
     emit metrics_updated(0.0);
     return;
@@ -1139,6 +1154,8 @@ void Manager::build_graph_spec(const std::filesystem::path &log_dir) {
     {
       ScopedTrace scope("Build Graph Nodes");
       spec_ = builder->build();
+      planned_frame_bytes_ = builder->frame_bytes();
+      effective_batch_frames_ = builder->target_frames_per_batch();
     }
   } catch (const std::exception &e) {
     std::string diagnostic_status;
