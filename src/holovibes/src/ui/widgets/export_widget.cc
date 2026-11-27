@@ -23,6 +23,7 @@
 #include <QSpacerItem>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <limits>
 
 namespace holovibes::ui {
 
@@ -64,10 +65,13 @@ int     ExportWidget::get_queue_count() const { return queues_spin_->value(); }
 bool    ExportWidget::isChecked() const { return enable_check_->isChecked(); }
 
 void ExportWidget::set_file_path(const QString &path) { file_line_edit_->setText(path); }
+void ExportWidget::set_frame_count(int count) {
+  frames_spin_->setValue(count);
+  frames_lower_button_->setEnabled(frames_spin_->value() > frame_batch_size_);
+}
 void ExportWidget::set_file_name_template(const QString &name) {
   file_name_template_edit_->setText(name);
 }
-void ExportWidget::set_frame_count(int count) { frames_spin_->setValue(count); }
 void ExportWidget::set_frame_batch_size(int batch_size) {
   frame_batch_size_ = std::max(1, batch_size);
   const auto value  = frames_spin_->value();
@@ -182,7 +186,7 @@ void ExportWidget::setup_ui() {
   frames_check_->setChecked(true);
   layout->addWidget(frames_check_, row, 0);
   auto *frame_controls  = new QHBoxLayout();
-  frames_spin_          = create_spin_box(content_container_, 1, 999999, 2048);
+  frames_spin_          = create_spin_box(content_container_, 0, std::numeric_limits<int>::max(), 2048);
   frames_lower_button_  = new QPushButton("−", content_container_);
   frames_higher_button_ = new QPushButton("+", content_container_);
   frames_lower_button_->setFixedWidth(28);
@@ -256,8 +260,8 @@ void ExportWidget::connect_signals() {
   connect(frames_higher_button_, &QPushButton::clicked, this, [this] {
     const auto batch  = frame_batch_size_;
     const auto value  = frames_spin_->value();
-    const auto higher = ((value / batch) + 1) * batch;
-    frames_spin_->setValue(std::min(frames_spin_->maximum(), higher));
+    const auto higher = (static_cast<long long>(value / batch) + 1) * batch;
+    frames_spin_->setValue(static_cast<int>(std::min<long long>(frames_spin_->maximum(), higher)));
   });
   set_frame_batch_size(1);
 

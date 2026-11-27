@@ -15,11 +15,19 @@
 #pragma once
 
 #include <cstdint>
+#include <cuda_runtime.h>
 #include <nlohmann/json.hpp>
 
 #include "holoflow/core/tasks.hh"
 
 namespace holotask::syncs {
+
+// Contrast from per-pixel temporal (sum, sum of squares), using the same clipped spatial window
+// and population variance as SpatialContrast. Scratch contains one double2 per image pixel.
+void enqueue_spatial_contrast_from_moments(const double2 *moments, double2 *scratch,
+                                           float *output, int width, int height,
+                                           int temporal_window_size, int window_size,
+                                           cudaStream_t stream);
 
 enum class SpatialContrastMethod : uint8_t { Kernel, FFT };
 

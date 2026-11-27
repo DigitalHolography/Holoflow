@@ -202,8 +202,8 @@ TemporalWindowFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   const auto settings = jsettings.get<TemporalWindowSettings>();
   if (input_descs.size() != 1)
     throw std::invalid_argument("TemporalWindow expects exactly one input");
-  if (settings.window_size < 3)
-    throw std::invalid_argument("TemporalWindow window_size must be at least 3");
+  if (settings.window_size < 2)
+    throw std::invalid_argument("TemporalWindow window_size must be at least 2");
   if (settings.stride_size == 0)
     throw std::invalid_argument("TemporalWindow stride_size must be positive");
   if (settings.source_cycle_frames != 0 && settings.source_cycle_frames < settings.window_size)

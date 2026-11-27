@@ -36,6 +36,7 @@ namespace holovibes::ui {
 
 namespace {
 constexpr auto kKeepCurrentConfigKey     = "preferences/always_keep_current_config";
+constexpr auto kAutoProcessedRecordCountKey = "preferences/auto_processed_record_count";
 
 void save_graph_preferences(QSettings &settings,
                             const holoflow::core::GraphSpecDumpPreferences &spec,
@@ -161,8 +162,9 @@ public:
   using GraphSpecDumpPreferences     = holoflow::core::GraphSpecDumpPreferences;
   using GraphCompiledDumpPreferences = holoflow::runtime::GraphCompiledDumpPreferences;
 
-  PreferencesDialog(QWidget *parent, holovibes::pipeline::Manager &manager)
-      : QDialog(parent), manager_(manager) {
+  PreferencesDialog(QWidget *parent, holovibes::pipeline::Manager &manager,
+                    std::function<void()> on_auto_count_changed)
+      : QDialog(parent), manager_(manager), on_auto_count_changed_(std::move(on_auto_count_changed)) {
     setWindowTitle(tr("Preferences"));
     setMinimumWidth(400);
     resize(600, 500);
@@ -188,6 +190,19 @@ public:
     import_form->addRow(keep_current_config_checkbox_);
     import_group_box->setLayout(import_form);
     sections_layout->addWidget(import_group_box);
+
+    auto *recording_group_box = new QGroupBox(tr("Recording"), this);
+    auto *recording_form = new QFormLayout();
+    auto_processed_record_count_checkbox_ = new QCheckBox(
+        tr("Set processed frame count from import range and Time Stride"), this);
+    auto_processed_record_count_checkbox_->setChecked(
+        QSettings().value(kAutoProcessedRecordCountKey, true).toBool());
+    auto_processed_record_count_checkbox_->setToolTip(
+        tr("For processed recording from a .holo file, set Nb. of frames to "
+           "(End index - Start index) / Time Stride."));
+    recording_form->addRow(auto_processed_record_count_checkbox_);
+    recording_group_box->setLayout(recording_form);
+    sections_layout->addWidget(recording_group_box);
 
     // Dump preferences
     auto *graph_spec_dump_group_box =
@@ -452,10 +467,16 @@ private:
     manager_.update_graph_compiled_dump_preferences(graph_compiled_dump_preferences);
     manager_.set_dump_runtime_failure_graphs(runtime_failure_graph_checkbox_->isChecked());
     QSettings settings;
+    const bool auto_count_changed =
+        settings.value(kAutoProcessedRecordCountKey, true).toBool() !=
+        auto_processed_record_count_checkbox_->isChecked();
     settings.setValue(kKeepCurrentConfigKey, keep_current_config_checkbox_->isChecked());
+    settings.setValue(kAutoProcessedRecordCountKey,
+                      auto_processed_record_count_checkbox_->isChecked());
     save_graph_preferences(settings, graph_spec_dump_preferences,
                            graph_compiled_dump_preferences);
     settings.sync();
+    if (auto_count_changed) on_auto_count_changed_();
   }
 
   void connect_signals() {
@@ -508,9 +529,12 @@ private:
             [this](bool) { apply_button_->setEnabled(true); });
     connect(keep_current_config_checkbox_, &QCheckBox::toggled, this,
             [this](bool) { apply_button_->setEnabled(true); });
+    connect(auto_processed_record_count_checkbox_, &QCheckBox::toggled, this,
+            [this](bool) { apply_button_->setEnabled(true); });
   }
 
   holovibes::pipeline::Manager &manager_;
+  std::function<void()> on_auto_count_changed_;
 
   QPushButton *apply_button_ = nullptr;
 
@@ -552,13 +576,15 @@ private:
   GraphCompiledDumpPreferencesWidgets graph_compiled_dump_preferences_widgets_;
   QCheckBox                          *runtime_failure_graph_checkbox_ = nullptr;
   QCheckBox                          *keep_current_config_checkbox_   = nullptr;
+  QCheckBox                          *auto_processed_record_count_checkbox_ = nullptr;
 };
 
 
 } // namespace
 
-void show_preferences_dialog(QWidget *parent, pipeline::Manager &manager) {
-  PreferencesDialog dialog(parent, manager);
+void show_preferences_dialog(QWidget *parent, pipeline::Manager &manager,
+                             std::function<void()> on_auto_count_changed) {
+  PreferencesDialog dialog(parent, manager, std::move(on_auto_count_changed));
   dialog.exec();
 }
 

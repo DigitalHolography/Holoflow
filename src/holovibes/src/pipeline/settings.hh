@@ -129,10 +129,16 @@ struct Settings {
 
   // Post-processing
   int         pp_fps;
-  bool        pp_fft_shift;
+  bool        pp_fft_shift = false;
   bool        pp_flatfield;
   float       pp_flatfield_cutoff_period_m;
   bool        pp_spatial_contrast;
+  bool        pp_local_pca = false;
+  int         local_pca_width_x = 32;
+  int         local_pca_width_y = 32;
+  int         local_pca_stride_x = 16;
+  int         local_pca_stride_y = 16;
+  float       local_pca_rank_factor = 1.f;
   int         pp_spatial_contrast_window_size;
   int         pp_spatial_contrast_dimensions = 2;
   int         pp_spatial_contrast_method = 0;

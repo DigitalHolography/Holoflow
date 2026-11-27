@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <format>
+#include <limits>
 #include <system_error>
 
 namespace holovibes::pipeline {
@@ -42,7 +43,7 @@ bool requires_processed_pipeline(const Settings &settings) {
 
 int recording_batch_size(const Settings &settings) {
   return settings.recording_method == RecordingMethod::RAW ? settings.load_batch
-                                                           : settings.cpu_out_size;
+                                                           : 1;
 }
 
 int max_time_z_end(const Settings &settings) {
@@ -211,7 +212,8 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
   const bool temporal_lscsi =
       requires_processed_pipeline(settings) && settings.pp_spatial_contrast &&
       settings.pp_spatial_contrast_dimensions == 3;
-  if (!temporal_lscsi && settings.time_window > 0 && settings.time_stride > 0 &&
+  if (!temporal_lscsi && !settings.pp_local_pca &&
+      settings.time_window > 0 && settings.time_stride > 0 &&
       (settings.time_stride % settings.time_window != 0)) {
     add_issue(result, ValidationSeverity::Error, "time_stride_not_multiple",
               "Time stride must be a multiple of the time window.",
@@ -253,7 +255,8 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
     }
 
     if (!settings.pp_spatial_contrast) {
-      if (settings.time_method == TimeMethod::NONE) {
+      if (!settings.pp_local_pca &&
+          settings.time_method == TimeMethod::NONE) {
         add_issue(result, ValidationSeverity::Error, "time_method_unsupported",
                   "A time transform must be selected for processed view mode.",
                   {SettingsField::TimeMethod});
@@ -262,7 +265,7 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
       const bool supported_spacial_method =
           settings.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION ||
           settings.spacial_method == SpacialMethod::ANGULAR_SPECTRUM;
-      if (!supported_spacial_method) {
+      if (!supported_spacial_method && !settings.pp_local_pca) {
         add_issue(
             result, ValidationSeverity::Error, "spacial_method_unsupported",
             "Fresnel Diffraction or Angular Spectrum must be selected for processed view mode.",
@@ -301,6 +304,21 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
       }
     }
 
+    if (settings.pp_local_pca &&
+        (settings.time_window < 2 || settings.local_pca_width_x < 1 ||
+         settings.local_pca_width_y < 1 || settings.local_pca_stride_x < 1 ||
+         settings.local_pca_stride_y < 1 ||
+         settings.local_pca_stride_x > settings.local_pca_width_x ||
+         settings.local_pca_stride_y > settings.local_pca_width_y ||
+         !std::isfinite(settings.local_pca_rank_factor) ||
+         settings.local_pca_rank_factor < 0.f ||
+         settings.time_z_begin < 0 || settings.time_z_begin >= settings.time_z_end ||
+         settings.time_z_end > settings.time_window)) {
+      add_issue(result, ValidationSeverity::Error, "local_pca_invalid",
+                "Local PCA needs at least two frames, positive kernel and step dimensions, and a nonnegative rank factor.",
+                {SettingsField::TimeWindow});
+    }
+
     if (settings.view_3d_cuts && !settings.pp_spatial_contrast) {
       add_issue(result, ValidationSeverity::Error, "view_3d_cuts_unsupported",
                 "3D cuts are not currently supported by the pipeline.",
@@ -318,7 +336,7 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
          settings.pp_spatial_contrast_window_size > 255 ||
          settings.pp_spatial_contrast_window_size % 2 == 0)) {
       add_issue(result, ValidationSeverity::Error, "pp_spatial_contrast_window_size_invalid",
-                "Spatial contrast window size must be an odd integer between 3 and 255.",
+                "Spatial contrast window size must be odd and within the selected method's range.",
                 {SettingsField::PpSpatialContrastWindowSize});
     }
 
@@ -332,7 +350,7 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
     if (settings.pp_spatial_contrast && settings.pp_spatial_contrast_dimensions == 3 &&
         settings.time_window < 3) {
       add_issue(result, ValidationSeverity::Error, "spatial_contrast_time_window_invalid",
-                "Temporal spatial contrast must use at least 3 frames.",
+                "Temporal contrast needs at least 3 frames.",
                 {SettingsField::TimeWindow});
     }
 

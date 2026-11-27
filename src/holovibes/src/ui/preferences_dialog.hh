@@ -15,6 +15,7 @@
 #pragma once
 
 #include "holoflow/runtime/graph_display.hh"
+#include <functional>
 
 class QSettings;
 class QWidget;
@@ -25,7 +26,8 @@ class Manager;
 
 namespace holovibes::ui {
 
-void show_preferences_dialog(QWidget *parent, pipeline::Manager &manager);
+void show_preferences_dialog(QWidget *parent, pipeline::Manager &manager,
+                             std::function<void()> on_auto_count_changed);
 void restore_graph_preferences(QSettings &settings,
                                holoflow::core::GraphSpecDumpPreferences &spec,
                                holoflow::runtime::GraphCompiledDumpPreferences &compiled);

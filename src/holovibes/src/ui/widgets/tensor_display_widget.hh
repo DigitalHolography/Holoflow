@@ -57,6 +57,9 @@ public:
   void set_value_range(float vmin, float vmax);
   /// Invert the normalized grayscale or colormap lookup value without changing tensor data.
   void set_display_inverted(bool inverted);
+  void set_axis_flips(bool flip_x, bool flip_y);
+  bool flip_x_enabled() const { return flip_x_; }
+  bool flip_y_enabled() const { return flip_y_; }
 
 public slots:
   void presentTensor(const QByteArray &bytes, int width, int height, holoflow::core::DType dtype);
@@ -101,6 +104,8 @@ private:
   GLint  vmin_loc_     = -1;
   GLint  vmax_loc_     = -1;
   GLint  invert_display_loc_ = -1;
+  GLint  flip_x_loc_ = -1;
+  GLint  flip_y_loc_ = -1;
 
   int  img_w_ = 0, img_h_ = 0;
   bool texture_storage_allocated_ = false;
@@ -114,6 +119,8 @@ private:
   float    vmin_ = 0.0f;
   float    vmax_ = 1.0f;
   bool     display_inverted_ = false;
+  bool     flip_x_ = false;
+  bool     flip_y_ = false;
 
   // Track current dtype to reallocate texture format if it changes
   holoflow::core::DType current_dtype_ = holoflow::core::DType::U8;

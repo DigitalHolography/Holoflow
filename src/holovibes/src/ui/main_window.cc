@@ -93,6 +93,8 @@ constexpr int  kLargeSpinMax             = 1024 * 1024;
 constexpr int  kTopBarHeight             = 30;
 constexpr auto kDefaultSamplingFrequency = 37'000.0;
 constexpr auto kKeepCurrentConfigKey     = "preferences/always_keep_current_config";
+constexpr auto kAutoProcessedRecordCountKey = "preferences/auto_processed_record_count";
+
 QSpinBox *create_spin_box(QWidget *parent, int minimum, int maximum, int value) {
   auto *spin_box = new QSpinBox(parent);
   spin_box->setRange(minimum, maximum);
@@ -425,6 +427,14 @@ MainWindow::MainWindow(QWidget *parent)
   setup_validation_connections();
   setup_update_connections();
 
+  connect(import_widget_, &ImportWidget::settings_changed, this,
+          &MainWindow::update_processed_recording_frame_count);
+  connect(render_widget_, &ImageRenderingWidget::settings_changed, this,
+          &MainWindow::update_processed_recording_frame_count);
+  connect(export_widget_, &ExportWidget::settings_changed, this,
+          &MainWindow::update_processed_recording_frame_count);
+  update_processed_recording_frame_count();
+
   validate_inputs();
   refresh_command_bar();
   configure_window();
@@ -703,6 +713,8 @@ void MainWindow::select_configurable_widget(ZernikeHistoryWidget *widget) {
 void MainWindow::on_selected_visualization_changed(const QString &visualization_id) {
   if (visualization_id == "zernike_a4") {
     selected_widget_settings_panel_->set_selected_widget(zernike_history_widget_);
+  } else if (visualization_id == "xy_processed") {
+    selected_widget_settings_panel_->set_selected_widget(xy_processed_widget_);
   } else if (visualization_id.isEmpty()) {
     selected_widget_settings_panel_->clear_selection();
   } else {
@@ -941,6 +953,14 @@ void MainWindow::save_persistent_state() {
   settings.remove("spatial_contrast_dimensions");
   settings.remove("spatial_contrast_temporal_frames");
   settings.setValue("spatial_contrast_method", render_widget_->get_spatial_contrast_method());
+  settings.setValue("local_pca_kernel", render_widget_->get_local_pca_kernel());
+  settings.setValue("local_pca_stride", render_widget_->get_local_pca_stride());
+  settings.setValue("local_pca_rank_factor", render_widget_->get_local_pca_rank_factor());
+  settings.setValue("local_pca_rectangular", render_widget_->is_local_pca_rectangular());
+  settings.setValue("local_pca_width_x", render_widget_->get_local_pca_kernel_width());
+  settings.setValue("local_pca_width_y", render_widget_->get_local_pca_kernel_height());
+  settings.setValue("local_pca_stride_x", render_widget_->get_local_pca_step_width());
+  settings.setValue("local_pca_stride_y", render_widget_->get_local_pca_step_height());
   settings.setValue("spatial_contrast_display_max",
                     render_widget_->get_spatial_contrast_display_max());
   settings.setValue("spatial_contrast_invert_display",
@@ -952,6 +972,8 @@ void MainWindow::save_persistent_state() {
   settings.setValue("registration_ellipse", view_widget_->is_registration_ellipse_enabled());
   settings.setValue("reticle", view_widget_->is_reticle_enabled());
   settings.setValue("reticle_radius", view_widget_->get_reticle_radius());
+  settings.setValue("xy_processed_flip_x", xy_processed_widget_->flip_x_enabled());
+  settings.setValue("xy_processed_flip_y", xy_processed_widget_->flip_y_enabled());
   settings.setValue("pct", view_widget_->is_pct_enabled());
   settings.setValue("pct_radius", view_widget_->get_pct_radius());
   settings.endGroup();
@@ -1061,7 +1083,7 @@ void MainWindow::restore_persistent_state() {
   render_widget_->set_filter_outer(
       settings.value("filter_outer", render_widget_->get_filter_outer()).toInt());
   restore_combo_text(settings, "space_transform", render_widget_->space_transform_combo());
-  restore_combo_text(settings, "time_transform", render_widget_->time_transform_combo());
+  render_widget_->set_time_transform(settings.value("time_transform", "None").toString());
   render_widget_->set_time_window(
       settings.value("time_window", render_widget_->get_time_window()).toInt());
   render_widget_->set_lambda(settings.value("lambda_nm", render_widget_->get_lambda()).toInt());
@@ -1115,6 +1137,17 @@ void MainWindow::restore_persistent_state() {
   render_widget_->set_spatial_contrast_method(
       settings.value("spatial_contrast_method", render_widget_->get_spatial_contrast_method())
           .toString());
+  render_widget_->set_local_pca_parameters(
+      settings.value("local_pca_kernel", settings.value("holovibe_pca_kernel", 32)).toInt(),
+      settings.value("local_pca_stride", settings.value("holovibe_pca_stride", 16)).toInt(),
+      settings.value("local_pca_rank_factor", settings.value("holovibe_pca_rank_factor", 1.0))
+          .toDouble());
+  render_widget_->set_local_pca_rectangular(
+      settings.value("local_pca_rectangular", false).toBool());
+  render_widget_->set_local_pca_kernel_width(settings.value("local_pca_width_x", 5).toInt());
+  render_widget_->set_local_pca_kernel_height(settings.value("local_pca_width_y", 5).toInt());
+  render_widget_->set_local_pca_step_width(settings.value("local_pca_stride_x", 1).toInt());
+  render_widget_->set_local_pca_step_height(settings.value("local_pca_stride_y", 1).toInt());
   render_widget_->spatial_contrast_display_max()->setValue(
       settings
           .value("spatial_contrast_display_max", render_widget_->get_spatial_contrast_display_max())
@@ -1135,6 +1168,9 @@ void MainWindow::restore_persistent_state() {
       settings.value("reticle", view_widget_->is_reticle_enabled()).toBool());
   view_widget_->reticle_radius()->setValue(
       settings.value("reticle_radius", view_widget_->get_reticle_radius()).toDouble());
+  xy_processed_widget_->set_axis_flips(
+      settings.value("xy_processed_flip_x", false).toBool(),
+      settings.value("xy_processed_flip_y", true).toBool());
   view_widget_->set_pct_enabled(settings.value("pct", view_widget_->is_pct_enabled()).toBool());
   view_widget_->set_pct_radius(
       settings.value("pct_radius", view_widget_->get_pct_radius()).toDouble());
@@ -1451,11 +1487,14 @@ void MainWindow::connect_import_controls() {
     }
     bool file_selected = false;
     try {
-      auto reader      = holofile::Reader(file.toStdString());
-      auto frame_count = reader.header().frame_count;
+      auto reader       = holofile::Reader(file.toStdString());
+      const auto header = reader.header();
+      auto frame_count  = header.frame_count;
       {
         QScopedValueRollback<bool> loading(loading_holofile_, true);
         import_widget_->set_file_path(file);
+        log_input_frame_size_once(std::filesystem::path(file.toStdString()),
+                                  header.frame_width, header.frame_height);
         import_widget_->set_end_index_range(0, static_cast<int>(frame_count));
         import_widget_->set_end_index(static_cast<int>(frame_count));
         import_widget_->set_start_index(0);
@@ -1612,7 +1651,27 @@ void MainWindow::show_fft_frequency_tool() {
 }
 
 void MainWindow::show_preferences() {
-  show_preferences_dialog(this, *pipeline_manager_);
+  show_preferences_dialog(this, *pipeline_manager_, [this]() {
+    update_processed_recording_frame_count();
+    update_if_running();
+  });
+}
+
+void MainWindow::update_processed_recording_frame_count() {
+  if (!QSettings().value(kAutoProcessedRecordCountKey, true).toBool() ||
+      import_widget_->is_camera_mode() ||
+      export_widget_->get_image_type() != "Processed Image")
+    return;
+
+  const int range = import_widget_->get_end_index() - import_widget_->get_start_index();
+  const int stride = render_widget_->get_time_stride();
+  if (range <= 0 || stride <= 0)
+    return;
+
+  if (export_widget_->get_frame_count() == range / stride)
+    return;
+  const QSignalBlocker blocker(export_widget_->frames_spin());
+  export_widget_->set_frame_count(range / stride);
 }
 
 std::filesystem::path MainWindow::makeRecordingPath(const QString &userText) {
@@ -2111,6 +2170,13 @@ void MainWindow::on_raw_record_stopped_failure(const QString &error, std::option
   show_pipeline_error_popup(tr("An error occurred while stopping raw recording:\n%1").arg(error));
 }
 
+void MainWindow::log_input_frame_size_once(const std::filesystem::path &path,
+                                           size_t width, size_t height) {
+  if (path.empty() || path == logged_input_path_) return;
+  logger()->info("[Input] {}: frame size {} x {} pixels", path.string(), width, height);
+  logged_input_path_ = path;
+}
+
 bool MainWindow::validate_inputs() {
   import_widget_->clear_validation_styles();
   export_widget_->clear_validation_styles();
@@ -2129,8 +2195,11 @@ bool MainWindow::validate_inputs() {
   pipeline::Settings settings = get_pipeline_settings();
   export_widget_->set_frame_batch_size(settings.recording_method == pipeline::RecordingMethod::RAW
                                            ? settings.load_batch
-                                           : settings.cpu_out_size);
+                                           : 1);
   const auto context             = build_validation_context(settings);
+  if (settings.import_source == pipeline::ImportSource::HOLOFILE &&
+      context.source_width.has_value() && context.source_height.has_value())
+    log_input_frame_size_once(settings.load_path, *context.source_width, *context.source_height);
   int        max_temporal_frames = std::numeric_limits<int>::max();
   if (settings.import_source == pipeline::ImportSource::HOLOFILE &&
       context.source_frame_count.has_value()) {
@@ -2146,6 +2215,8 @@ bool MainWindow::validate_inputs() {
       settings.asp_padding_enabled) {
     display_dims = QSize(settings.asp_padded_width, settings.asp_padded_height);
   }
+  if (context.source_width.has_value() && context.source_height.has_value())
+    settings.pp_spatial_contrast_window_size = render_widget_->get_spatial_contrast_window_size();
   view_widget_->set_xy_extent(display_dims.width(), display_dims.height());
   const auto result = pipeline::validate_settings(settings, context);
   refresh_validation_tooltips(result);
@@ -2350,6 +2421,21 @@ MainWindow::build_validation_context(const pipeline::Settings &settings) const {
 void MainWindow::setup_validation_connections() {
   bool (MainWindow::*cb)() = &MainWindow::validate_inputs;
 
+  connect(render_widget_->time_transform_combo(), qOverload<int>(&QComboBox::activated), this,
+          [this](int) {
+            if (render_widget_->is_local_pca_enabled()) {
+              view_widget_->set_z_origin(0);
+              view_widget_->set_z_width(std::max(1, render_widget_->get_time_window()));
+            }
+          });
+  connect(render_widget_->pca_type_combo(), qOverload<int>(&QComboBox::activated), this,
+          [this](int) {
+            if (render_widget_->is_local_pca_enabled()) {
+              view_widget_->set_z_origin(0);
+              view_widget_->set_z_width(std::max(1, render_widget_->get_time_window()));
+            }
+          });
+
   // Connect to widget signals
   connect(import_widget_, &ImportWidget::settings_changed, this, cb);
   connect(export_widget_, &ExportWidget::settings_changed, this, cb);
@@ -2493,6 +2579,7 @@ QSize MainWindow::processed_display_dims(QSize source_dims) const {
 }
 
 pipeline::Settings MainWindow::get_pipeline_settings() {
+  update_processed_recording_frame_count();
   using namespace holovibes::pipeline;
 
   Settings s;
@@ -2582,10 +2669,11 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
   {
     std::map<std::string, TimeMethod> method_from_str{
         {"None", TimeMethod::NONE},
-        {"Principal Component Analysis", TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS},
+        {"Global PCA", TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS},
         {"RFFT", TimeMethod::RFFT},
         {"FFT", TimeMethod::FFT},
         {"LSCI (3D)", TimeMethod::NONE},
+        {"Local PCA", TimeMethod::NONE},
     };
     s.time_window       = render_widget_->get_time_window();
     s.time_stride       = render_widget_->get_time_stride();
@@ -2637,6 +2725,16 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.pp_flatfield_cutoff_period_m =
         static_cast<float>(view_widget_->get_flatfield_cutoff_period_um() * 1e-6);
     s.pp_spatial_contrast             = render_widget_->is_spatial_contrast_enabled();
+    s.pp_local_pca = render_widget_->is_local_pca_enabled();
+    s.local_pca_width_x = render_widget_->is_local_pca_rectangular()
+        ? render_widget_->get_local_pca_kernel_width() : render_widget_->get_local_pca_kernel();
+    s.local_pca_width_y = render_widget_->is_local_pca_rectangular()
+        ? render_widget_->get_local_pca_kernel_height() : render_widget_->get_local_pca_kernel();
+    s.local_pca_stride_x = render_widget_->is_local_pca_rectangular()
+        ? render_widget_->get_local_pca_step_width() : render_widget_->get_local_pca_stride();
+    s.local_pca_stride_y = render_widget_->is_local_pca_rectangular()
+        ? render_widget_->get_local_pca_step_height() : render_widget_->get_local_pca_stride();
+    s.local_pca_rank_factor = static_cast<float>(render_widget_->get_local_pca_rank_factor());
     s.pp_spatial_contrast_window_size = render_widget_->get_spatial_contrast_window_size();
     s.pp_spatial_contrast_dimensions  = render_widget_->get_spatial_contrast_dimensions();
     s.pp_spatial_contrast_method = render_widget_->get_spatial_contrast_method() == "FFT" ? 1 : 0;
@@ -2817,7 +2915,7 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     QString method;
     switch (s.time_method) {
     case TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS:
-      method = "Principal Component Analysis";
+      method = "Global PCA";
       break;
     case TimeMethod::RFFT:
       method = "RFFT";
@@ -2829,9 +2927,13 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
       method = "None";
       break;
     }
+    if (s.pp_local_pca) method = "Local PCA";
     render_widget_->set_time_transform(method);
     render_widget_->set_time_window(static_cast<int>(s.time_window));
     render_widget_->set_time_stride(static_cast<int>(s.time_stride));
+    render_widget_->set_local_pca_parameters(s.local_pca_width_x,
+                                             s.local_pca_stride_x,
+                                             s.local_pca_rank_factor);
 
     view_widget_->set_z_origin(static_cast<int>(s.time_z_begin));
     view_widget_->set_z_width(static_cast<int>(s.time_z_end - s.time_z_begin));
@@ -2864,6 +2966,14 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     view_widget_->set_flatfield_cutoff_period_um(s.pp_flatfield_cutoff_period_m * 1e6);
     render_widget_->set_spatial_contrast_mode(s.pp_spatial_contrast,
                                               s.pp_spatial_contrast_dimensions);
+    render_widget_->set_local_pca_mode(s.pp_local_pca);
+    render_widget_->set_local_pca_rectangular(
+        s.local_pca_width_x != s.local_pca_width_y ||
+        s.local_pca_stride_x != s.local_pca_stride_y);
+    render_widget_->set_local_pca_kernel_width(s.local_pca_width_x);
+    render_widget_->set_local_pca_kernel_height(s.local_pca_width_y);
+    render_widget_->set_local_pca_step_width(s.local_pca_stride_x);
+    render_widget_->set_local_pca_step_height(s.local_pca_stride_y);
     render_widget_->set_spatial_contrast_window_size(s.pp_spatial_contrast_window_size);
     render_widget_->set_spatial_contrast_method(s.pp_spatial_contrast_method == 1 ? "FFT"
                                                                                   : "Kernel");

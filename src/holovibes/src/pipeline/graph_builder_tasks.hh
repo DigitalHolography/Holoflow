@@ -89,6 +89,7 @@
 #include "holotask/syncs/filter2d.hh"
 #include "holotask/syncs/flatfield.hh"
 #include "holotask/syncs/fresnel_diffraction.hh"
+#include "holotask/syncs/local_pca.hh"
 #include "holotask/syncs/mean_abs.hh"
 #include "holotask/syncs/memcpy.hh"
 #include "holotask/syncs/normalize.hh"
@@ -117,24 +118,25 @@ class GraphBuilderTasks : public GraphBuilderTracer {
 protected:
   using GraphBuilderTracer::GraphBuilderTracer;
 
-  TDesc              holofile_read(holotask::sources::HolofileSettings s);
-  TDesc              empty(holonp::EmptySettings s);
-  TDesc              zeros(holonp::ZerosSettings s);
-  TDesc              asarray(holonp::AsArraySettings s);
-  TDesc              arange(holonp::ArangeSettings s);
+  // clang-format off
+  TDesc holofile_read(holotask::sources::HolofileSettings s);
+  TDesc empty(holonp::EmptySettings s);
+  TDesc zeros(holonp::ZerosSettings s);
+  TDesc asarray(holonp::AsArraySettings s);
+  TDesc arange(holonp::ArangeSettings s);
   std::vector<TDesc> meshgrid(std::span<const TDesc> Xs, holonp::MeshgridSettings s);
-  TDesc              ascontiguousarray(const TDesc &X, holonp::AsContiguousArraySettings s);
-  TDesc              copy(const TDesc &X, holonp::CopySettings s);
-  TDesc              memcpy(const TDesc &X, holotask::syncs::MemcpySettings s);
-  TDesc              batched_queue(const TDesc &X, holotask::asyncs::BatchQueueSettings s);
-  TDesc              temporal_window(const TDesc &X, holotask::asyncs::TemporalWindowSettings s);
-  std::vector<TDesc> dual_reader_batch_queue(const TDesc                                   &X,
-                                             holotask::asyncs::DualReaderBatchQueueSettings s);
-  TDesc              convert(const TDesc &X, holotask::syncs::ConversionSettings s);
-  TDesc              pca(const TDesc &X, holotask::syncs::PcaSettings s);
-  TDesc              flatfield(const TDesc &X, holotask::syncs::FlatfieldSettings s);
-  TDesc              filter_2d(const TDesc &X, holotask::syncs::Filter2DSettings s);
-  TDesc              spatial_contrast(const TDesc &X, holotask::syncs::SpatialContrastSettings s);
+  TDesc ascontiguousarray(const TDesc &X, holonp::AsContiguousArraySettings s);
+  TDesc copy(const TDesc &X, holonp::CopySettings s);
+  TDesc memcpy(const TDesc &X, holotask::syncs::MemcpySettings s);
+  TDesc batched_queue(const TDesc &X, holotask::asyncs::BatchQueueSettings s);
+  TDesc temporal_window(const TDesc &X, holotask::asyncs::TemporalWindowSettings s);
+  std::vector<TDesc> dual_reader_batch_queue(const TDesc &X, holotask::asyncs::DualReaderBatchQueueSettings s);
+  TDesc convert(const TDesc &X, holotask::syncs::ConversionSettings s);
+  TDesc pca(const TDesc &X, holotask::syncs::PcaSettings s);
+  TDesc flatfield(const TDesc &X, holotask::syncs::FlatfieldSettings s);
+  TDesc filter_2d(const TDesc &X, holotask::syncs::Filter2DSettings s);
+  TDesc spatial_contrast(const TDesc &X, holotask::syncs::SpatialContrastSettings s);
+  TDesc local_pca(const TDesc &X, holotask::syncs::LocalPcaSettings s);
   TDesc fresnel_diffraction(const TDesc &X, holotask::syncs::FresnelDiffractionSettings s);
   TDesc fresnel_qin(const TDesc &Z, holotask::sources::FresnelQinSettings s);
   TDesc fresnel_qout(const TDesc &Z, holotask::sources::FresnelQoutSettings s);

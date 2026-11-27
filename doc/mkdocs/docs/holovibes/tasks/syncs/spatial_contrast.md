@@ -27,9 +27,29 @@ For **LSCI (2D)**, choose it under **Space Transform**. Holovibes calculates a c
 
 For **LSCI (3D)**, choose it under **Time Transform**. **LSCI Window (px)** sets the spatial side length, **Time Window** sets the number of consecutive frames pooled into each map, and **Time Stride** sets how many frames to advance. Set stride equal to window length for nonoverlapping blocks; a smaller stride creates overlapping windows. The two LSCI choices are mutually exclusive. **LSCI method** selects Kernel or FFT.
 
-Both modes use the acquired intensity frames directly, without hologram propagation or temporal Fourier analysis. **Accumulation** can average successive contrast maps. If enabled, **Flatfield** is applied to the calculated map before accumulation, and percentile clipping is applied after accumulation. These operations change the processed result; disable them when reproducing an uncorrected $K$ map.
+Choose **PCA** under **Time Transform**, then choose **Local PCA** under **PCA type**.
+**Global PCA** also appears there when a propagation Space Transform is selected.
 
-The calculated map is F32 before display conversion. **Display max K** maps the range from 0 to the selected value onto U8 grayscale and clips larger values for display. **Invert LSCI** reverses that grayscale. Holovibes uses this same U8 image for the processed preview and processed recording; neither control changes the estimator's F32 output. Raw viewing and raw recording use the original intensity stream.
+**Local PCA** is based on the Holovibes `local_pca` branch. It applies the selected spatial transform to each temporal
+frame first, then gathers wrapped complex kernels (32×32 by default, step 16).
+For each kernel it diagonalizes the uncentered Gram matrix $H^*H$, computes
+$e=\exp(-\sum_i p_i\log p_i)$ with $p_i=\max(\lambda_i,0)/\sum_j\max(\lambda_j,0)$,
+and removes the strongest $\min(T,\lceil f e\rceil)$ modes, where $f$ is the
+**Rank factor** (default 1). The residual $H V_{\rm keep}V_{\rm keep}^*$ is
+accumulated at every kernel pixel. Overlapping residuals are averaged by their
+actual contribution counts. The rectangular checkbox exposes independent kernel
+widths, heights, and steps; each step must be positive and no larger than its
+kernel side. Time Stride controls the advance between temporal windows. Z and Width select residual time samples
+for display rather than PCA components. With no Space Transform, real input is
+treated as complex input with zero imaginary part.
+
+**Global PCA** computes PCA on the full temporal frame stack. Its selected component projections
+are propagated afterward. Z and Width select the component interval.
+
+For LSCI, **Accumulation** can average successive maps. If enabled, **Flatfield** is applied to
+the calculated map before accumulation, and percentile clipping is applied after accumulation.
+
+The calculated map is F32 before display conversion. With fixed scaling, **Display max K** maps the range from 0 to the selected value onto U8 grayscale and clips larger values for display. **Invert LSCI** reverses that grayscale. Holovibes uses this same U8 image for the processed preview and processed recording; neither control changes the estimator's F32 output. Raw viewing and raw recording use the original intensity stream.
 
 For a worked configuration based on high-speed retinal imaging, see [Retinal laser speckle contrast imaging](../../../applications/retinal-lsci.md).
 

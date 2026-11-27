@@ -139,6 +139,41 @@ TEST(SignalPlotSettingsTest, DerivesSampleTimeFromFrequencyStride) {
   EXPECT_DOUBLE_EQ(settings.signal_plot_sample_time_seconds(), 64.0 / 40'000.0);
 }
 
+TEST(LocalPcaSettingsTest, AllowsOverlappingTimeWindows) {
+  Settings settings{};
+  settings.view_type = ViewType::PROCESSED;
+  settings.pp_local_pca = true;
+  settings.time_window = 32;
+  settings.time_stride = 8;
+  settings.time_z_begin = 0;
+  settings.time_z_end = 32;
+
+  EXPECT_FALSE(has_issue(validate_settings(settings, {}), "time_stride_not_multiple"));
+
+  settings.time_window = 1;
+  settings.time_z_end = 1;
+  EXPECT_TRUE(has_issue(validate_settings(settings, {}), "local_pca_invalid"));
+  settings.time_window = 32;
+  settings.time_z_end = 32;
+
+  settings.pp_local_pca = false;
+  EXPECT_TRUE(has_issue(validate_settings(settings, {}), "time_stride_not_multiple"));
+}
+
+TEST(RecordingSettingsTest, ProcessedCountDoesNotNeedToMatchQueueCapacity) {
+  Settings settings{};
+  settings.recording_method = RecordingMethod::PROCESSED;
+  settings.recording_path = "recording.holo";
+  settings.recording_count = 7;
+  settings.cpu_out_size = 32;
+
+  EXPECT_FALSE(has_issue(validate_settings(settings, {}), "recording_count_batch_mismatch"));
+
+  settings.recording_method = RecordingMethod::RAW;
+  settings.load_batch = 8;
+  EXPECT_TRUE(has_issue(validate_settings(settings, {}), "recording_count_batch_mismatch"));
+}
+
 TEST(SlidingAverageSettingsTest, RejectsMultipleAutofocusIterationsForNonUnitWindow) {
   Settings settings{};
   settings.view_type           = ViewType::PROCESSED;
@@ -159,6 +194,52 @@ TEST(SlidingAverageSettingsTest, RejectsMultipleAutofocusIterationsForNonUnitWin
   settings.pp_accumulation = 1;
   EXPECT_FALSE(
       has_issue(validate_settings(settings, {}), "autofocus_sliding_average_multiple_iterations"));
+}
+
+TEST(LocalPcaSettingsTest, ValidatesKernelAndComponentRange) {
+  Settings settings{};
+  settings.view_type = ViewType::PROCESSED;
+  settings.pp_local_pca = true;
+  settings.time_window = 16;
+  settings.time_z_begin = 0;
+  settings.time_z_end = 15;
+  EXPECT_FALSE(has_issue(validate_settings(settings, {}), "local_pca_invalid"));
+
+  settings.time_z_end = 17;
+  EXPECT_TRUE(has_issue(validate_settings(settings, {}), "local_pca_invalid"));
+  settings.time_z_end = 15;
+  settings.local_pca_stride_x = settings.local_pca_width_x + 1;
+  EXPECT_TRUE(has_issue(validate_settings(settings, {}), "local_pca_invalid"));
+}
+
+TEST(LocalPcaSettingsTest, JsonRoundTripPreservesComplexMode) {
+  Settings settings{};
+  settings.pp_local_pca = true;
+  settings.local_pca_width_x = 24;
+  settings.local_pca_rank_factor = 0.7f;
+  const auto restored = old_json_to_settings(settings_to_old_json(settings), Settings{});
+  EXPECT_TRUE(restored.pp_local_pca);
+  EXPECT_EQ(restored.local_pca_width_x, 24);
+  EXPECT_FLOAT_EQ(restored.local_pca_rank_factor, 0.7f);
+}
+
+TEST(LocalPcaSettingsTest, LegacyJsonSelectsFormerHolovibeMode) {
+  auto json = settings_to_old_json(Settings{});
+  auto &contrast = json["compute_settings"]["view"]["spatial_contrast"];
+  contrast["local_pca_enabled"] = true;
+  contrast["holovibe_local_pca_enabled"] = true;
+  contrast["holovibe_pca_width_x"] = 24;
+  contrast["holovibe_pca_rank_factor"] = 0.7f;
+  contrast.erase("local_pca_width_x");
+  contrast.erase("local_pca_rank_factor");
+  auto restored = old_json_to_settings(json, Settings{});
+  EXPECT_TRUE(restored.pp_local_pca);
+  EXPECT_EQ(restored.local_pca_width_x, 24);
+  EXPECT_FLOAT_EQ(restored.local_pca_rank_factor, 0.7f);
+
+  contrast["holovibe_local_pca_enabled"] = false;
+  restored = old_json_to_settings(json, Settings{});
+  EXPECT_FALSE(restored.pp_local_pca);
 }
 
 TEST(SignalPlotSettingsTest, UnknownAutofocusSlopeModeKeepsDefault) {

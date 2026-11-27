@@ -103,7 +103,7 @@ constexpr auto kFlatfieldCutoffConstraints        = std::to_array<const char *>(
     "Converted to anisotropic Gaussian sigmas using the current image pitch.",
 });
 constexpr auto kSpatialContrastWindowConstraints = std::to_array<const char *>({
-    "Must be odd and between 3 and 255 pixels.",
+    "Must be odd and between 3 and 255 pixels for LSCI.",
 });
 constexpr auto kSpatialContrastDimensionsConstraints = std::to_array<const char *>({
     "Choose LSCI (2D) in Space Transform or LSCI (3D) in Time Transform.",

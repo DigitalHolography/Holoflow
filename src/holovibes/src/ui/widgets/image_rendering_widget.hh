@@ -51,6 +51,15 @@ public:
   QString get_convolution() const;
   bool    is_convolution_divide() const;
   bool    is_spatial_contrast_enabled() const;
+  bool    is_local_pca_enabled() const;
+  int     get_local_pca_kernel() const;
+  int     get_local_pca_stride() const;
+  double  get_local_pca_rank_factor() const;
+  bool    is_local_pca_rectangular() const;
+  int     get_local_pca_kernel_width() const;
+  int     get_local_pca_kernel_height() const;
+  int     get_local_pca_step_width() const;
+  int     get_local_pca_step_height() const;
   int     get_spatial_contrast_window_size() const;
   int     get_spatial_contrast_dimensions() const;
   QString get_spatial_contrast_method() const;
@@ -74,6 +83,13 @@ public:
   void set_convolution(const QString &kernel);
   void set_convolution_divide(bool enabled);
   void set_spatial_contrast_mode(bool enabled, int dimensions);
+  void set_local_pca_mode(bool enabled);
+  void set_local_pca_parameters(int kernel, int stride, double rank_factor);
+  void set_local_pca_rectangular(bool value);
+  void set_local_pca_kernel_width(int value);
+  void set_local_pca_kernel_height(int value);
+  void set_local_pca_step_width(int value);
+  void set_local_pca_step_height(int value);
   void set_spatial_contrast_window_size(int value);
   void set_time_window_max_for_temporal_lscsi(int value);
   void set_spatial_contrast_method(const QString &method);
@@ -106,6 +122,7 @@ public:
   QSpinBox        *filter_2d_outer_spin();
   QComboBox       *space_transform_combo();
   QComboBox       *time_transform_combo();
+  QComboBox       *pca_type_combo();
   QSpinBox        *time_window_spin();
   QSpinBox        *lambda_spin();
   QSpinBox        *focus_spin();
@@ -134,6 +151,7 @@ private:
   void        update_spatial_contrast_controls();
   void        update_spatial_contrast_display_range();
   void        update_time_window_limits();
+  void        update_pca_type_options();
 
   QComboBox       *image_combo_;
   QSpinBox        *batch_size_spin_;
@@ -143,6 +161,8 @@ private:
   QSpinBox        *filter_2d_outer_spin_;
   QComboBox       *space_transform_combo_;
   QComboBox       *time_transform_combo_;
+  QLabel          *pca_type_label_;
+  QComboBox       *pca_type_combo_;
   QSpinBox        *time_window_spin_;
   QSpinBox        *lambda_spin_;
   QSpinBox        *focus_spin_;
@@ -157,6 +177,21 @@ private:
   QSpinBox        *spatial_contrast_window_size_;
   QLabel          *spatial_contrast_method_label_;
   QComboBox       *spatial_contrast_method_;
+  QCheckBox       *local_pca_rectangular_;
+  QLabel          *local_pca_square_kernel_label_;
+  QSpinBox        *local_pca_square_kernel_;
+  QLabel          *local_pca_square_stride_label_;
+  QSpinBox        *local_pca_square_stride_;
+  QLabel          *local_pca_rank_label_;
+  QDoubleSpinBox  *local_pca_rank_;
+  QLabel          *local_pca_kernel_width_label_;
+  QSpinBox        *local_pca_kernel_width_;
+  QLabel          *local_pca_kernel_height_label_;
+  QSpinBox        *local_pca_kernel_height_;
+  QLabel          *local_pca_step_width_label_;
+  QSpinBox        *local_pca_step_width_;
+  QLabel          *local_pca_step_height_label_;
+  QSpinBox        *local_pca_step_height_;
   QLabel          *spatial_contrast_display_max_label_;
   QDoubleSpinBox  *spatial_contrast_display_max_;
   QCheckBox       *spatial_contrast_invert_display_;

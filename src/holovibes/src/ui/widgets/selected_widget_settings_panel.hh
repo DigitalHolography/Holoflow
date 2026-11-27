@@ -24,6 +24,8 @@ namespace holovibes::ui {
 
 class ZernikeHistorySettingsWidget;
 class ZernikeHistoryWidget;
+class XYProcessedSettingsWidget;
+class TensorDisplayWidget;
 
 class SelectedWidgetSettingsPanel : public QGroupBox {
   Q_OBJECT
@@ -32,6 +34,7 @@ public:
   explicit SelectedWidgetSettingsPanel(QWidget *parent = nullptr);
 
   void set_selected_widget(ZernikeHistoryWidget *widget);
+  void set_selected_widget(TensorDisplayWidget *widget);
   void show_no_configurable_settings();
   void clear_selection();
 
@@ -40,7 +43,8 @@ private:
   QWidget                       *empty_page_           = nullptr;
   QLabel                        *empty_placeholder_    = nullptr;
   ZernikeHistorySettingsWidget  *zernike_history_page_ = nullptr;
-  QPointer<ZernikeHistoryWidget> selected_widget_;
+  XYProcessedSettingsWidget     *xy_processed_page_ = nullptr;
+  QPointer<QWidget>              selected_widget_;
   QMetaObject::Connection        destroyed_connection_;
 };
 

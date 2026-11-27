@@ -217,6 +217,27 @@ TEST(ConversionCudaGraph, CachesScaledConversionGraphsByBufferAddress) {
   exercise_scaled<uint16_t>(Settings::Target::U16);
 }
 
+TEST(ConversionCudaGraph, ScalesConstantF32ImageToBlack) {
+  const std::vector<float> input_values(16, -0.02f);
+  const TDesc input_desc({input_values.size()}, DType::F32, MemLoc::Device);
+  const Settings settings{Settings::Target::U8, Settings::Strategy::Scaled};
+  holotask::syncs::ConversionFactory factory;
+  const auto inference = factory.infer(std::array{input_desc}, settings);
+  curaii::CudaStream stream;
+  auto task = factory.create(std::array{input_desc}, settings, {.stream = stream.get()});
+  holonp_test::TensorTestBuffer input(input_desc);
+  holonp_test::TensorTestBuffer output(inference.output_descs[0]);
+  input.upload(as_bytes<float>(input_values));
+  std::array inputs{input.view()};
+  std::array outputs{output.view()};
+  std::atomic<bool> cancelled{false};
+  holoflow::core::SyncCtx ctx{inputs, outputs, &cancelled, nullptr, nullptr};
+
+  ASSERT_EQ(task->execute(ctx), OpResult::Ok);
+  CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+  expect_output<uint8_t>(output, std::vector<uint8_t>(input_values.size(), 0));
+}
+
 TEST(ConversionCudaGraph, FallsBackOnDefaultStreamAndDuringOuterCapture) {
   const std::vector<uint8_t>         input_values{2, 4, 8, 16};
   const TDesc                        input_desc({input_values.size()}, DType::U8, MemLoc::Device);

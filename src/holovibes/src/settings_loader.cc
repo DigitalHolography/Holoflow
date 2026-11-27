@@ -158,6 +158,12 @@ void write_view(json &j, const Settings &s) {
   view["flatfield"]["cutoff_period_m"] = s.pp_flatfield_cutoff_period_m;
   auto &spatial_contrast                  = view["spatial_contrast"];
   spatial_contrast["enabled"]             = s.pp_spatial_contrast;
+  spatial_contrast["local_pca_enabled"] = s.pp_local_pca;
+  spatial_contrast["local_pca_width_x"] = s.local_pca_width_x;
+  spatial_contrast["local_pca_width_y"] = s.local_pca_width_y;
+  spatial_contrast["local_pca_stride_x"] = s.local_pca_stride_x;
+  spatial_contrast["local_pca_stride_y"] = s.local_pca_stride_y;
+  spatial_contrast["local_pca_rank_factor"] = s.local_pca_rank_factor;
   spatial_contrast["window_size"]         = s.pp_spatial_contrast_window_size;
   spatial_contrast["dimensions"]          = s.pp_spatial_contrast_dimensions;
   spatial_contrast["method"] = s.pp_spatial_contrast_method == 1 ? "fft" : "kernel";
@@ -279,6 +285,20 @@ void read_view(Settings &s, const json &view) {
       val(flatfield, "cutoff_period_m", s.pp_flatfield_cutoff_period_m);
   const auto &spatial_contrast = child_or_empty(view, "spatial_contrast");
   s.pp_spatial_contrast = val(spatial_contrast, "enabled", s.pp_spatial_contrast);
+  // Old configurations may contain both modes; only the former Holovibe mode survives.
+  s.pp_local_pca = spatial_contrast.contains("holovibe_local_pca_enabled")
+      ? val(spatial_contrast, "holovibe_local_pca_enabled", false)
+      : val(spatial_contrast, "local_pca_enabled", s.pp_local_pca);
+  s.local_pca_width_x = val(spatial_contrast, "local_pca_width_x",
+      val(spatial_contrast, "holovibe_pca_width_x", s.local_pca_width_x));
+  s.local_pca_width_y = val(spatial_contrast, "local_pca_width_y",
+      val(spatial_contrast, "holovibe_pca_width_y", s.local_pca_width_y));
+  s.local_pca_stride_x = val(spatial_contrast, "local_pca_stride_x",
+      val(spatial_contrast, "holovibe_pca_stride_x", s.local_pca_stride_x));
+  s.local_pca_stride_y = val(spatial_contrast, "local_pca_stride_y",
+      val(spatial_contrast, "holovibe_pca_stride_y", s.local_pca_stride_y));
+  s.local_pca_rank_factor = val(spatial_contrast, "local_pca_rank_factor",
+      val(spatial_contrast, "holovibe_pca_rank_factor", s.local_pca_rank_factor));
   s.pp_spatial_contrast_window_size =
       val(spatial_contrast, "window_size", s.pp_spatial_contrast_window_size);
   s.pp_spatial_contrast_dimensions =
