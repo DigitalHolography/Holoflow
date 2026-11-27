@@ -681,16 +681,15 @@ void Manager::update_pipeline(const Settings &settings) {
   } catch (const std::exception &e) {
     stop_zernike_history(true);
     settings_dirty_ = true;
-    if (compiler_output_ != nullptr) {
-      try {
-        run_compiled_graph();
-        logger()->warn("[Manager::update_pipeline] New graph failed; resumed previous graph: {}",
-                       e.what());
-      } catch (const std::exception &resume_error) {
-        logger()->error("[Manager::update_pipeline] Failed to resume previous graph: {}",
-                        resume_error.what());
-      }
+    if (scheduler_ && scheduler_->is_running()) {
+      scheduler_->request_stop();
+      scheduler_->wait();
     }
+    stop_metrics_updates();
+    stop_event_polling();
+#if defined(_WIN32)
+    uninstall_windows_crash_handler();
+#endif
 
     const QString msg = QString("Failed to update pipeline: %1").arg(e.what());
     logger()->error("[Manager::update_pipeline] {}", msg.toStdString());
