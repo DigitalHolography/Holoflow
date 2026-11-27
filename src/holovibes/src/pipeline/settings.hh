@@ -14,8 +14,11 @@
 
 #pragma once
 
+#include "holotask/pipelines/focus_stack.hh"
 #include <filesystem>
+#include <nlohmann/json_fwd.hpp>
 #include <optional>
+#include <string>
 #include <variant>
 
 namespace holovibes::pipeline {
@@ -25,6 +28,8 @@ enum class ImportSource {
   AMETEK_S711_EURESYS_COAXLINK_QSFP,
   AMETEK_S991_EURESYS_COAXLINK_QSFP,
   HOLOFILE,
+  MTD_DATASET,
+  HOLO_FOCUS,
 };
 
 const char *to_string(ImportSource src);
@@ -65,6 +70,29 @@ enum class MomentType {
   M2,
 };
 
+struct MTDReconstructionSettings {
+  int                   dimension  = 512;
+  int                   iterations = 10;
+  std::optional<double> medium_index;
+  bool                  operator==(const MTDReconstructionSettings &) const = default;
+};
+
+struct MTDViewSettings {
+  int         x = 256, y = 256, z = 280;
+  std::string component = "real";
+  double      minimum = 0.0, maximum = 0.06;
+  int         band_width = 0; ///< Inclusive extent: zero means one plane, like Holovibes.
+  int         x_width = 0, y_width = 0;
+  bool        auto_contrast                             = false;
+  bool        fit_panel                                 = false;
+  bool        operator==(const MTDViewSettings &) const = default;
+};
+
+void to_json(nlohmann::json &, const MTDReconstructionSettings &);
+void from_json(const nlohmann::json &, MTDReconstructionSettings &);
+void to_json(nlohmann::json &, const MTDViewSettings &);
+void from_json(const nlohmann::json &, MTDViewSettings &);
+
 struct Settings {
   // Advanced
   int cpu_in_size;
@@ -73,6 +101,21 @@ struct Settings {
   int cpu_out_size;
   int gpu_out_size;
   int time_accumulation;
+
+  MTDReconstructionSettings              mtd_reconstruction;
+  MTDViewSettings                        mtd_view;
+  holotask::pipelines::HoloFocusSettings focus_reconstruction;
+  MTDViewSettings                        focus_view{.x             = 0,
+                                                    .y             = 0,
+                                                    .z             = 224,
+                                                    .component     = "real",
+                                                    .minimum       = 0,
+                                                    .maximum       = 1,
+                                                    .band_width    = 20,
+                                                    .x_width       = 20,
+                                                    .y_width       = 20,
+                                                    .auto_contrast = true,
+                                                    .fit_panel     = false};
 
   // Import
   ImportSource          import_source;

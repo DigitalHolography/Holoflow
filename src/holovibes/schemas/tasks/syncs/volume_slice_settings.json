@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VolumeSliceSettings",
+  "type": "object",
+  "properties": {
+    "axis": {
+      "type": "integer",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 2
+    },
+    "index": {
+      "type": "integer",
+      "default": 280,
+      "minimum": 0
+    },
+    "component": {
+      "type": "string",
+      "default": "real",
+      "enum": [
+        "real",
+        "imaginary",
+        "magnitude"
+      ]
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1,
+      "description": "Average adjacent planes starting at index. Range must fit inside volume."
+    },
+    "transpose_output": {
+      "type": "boolean",
+      "default": false,
+      "description": "Swap the two output axes; used for Holovibes YZ orientation."
+    }
+  },
+  "additionalProperties": false
+}

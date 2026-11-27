@@ -13,6 +13,11 @@
 // limitations under the License.
 
 #include "ui/widgets/tensor_display_widget.hh"
+#include "ui/widgets/slice_navigation_overlay.hh"
+#include <QFocusEvent>
+#include <QKeyEvent>
+#include <QMouseEvent>
+#include <QResizeEvent>
 
 #include <QDebug>
 #include <QLabel>
@@ -48,10 +53,12 @@ uniform sampler2D colormap_tex;
 uniform int use_colormap;
 uniform float vmin;
 uniform float vmax;
+uniform bool vertical_flip;
 uniform int invert_display;
 
 void main(){
-  float raw_val = texture(tex, uv).r;
+  vec2 sample_uv = vec2(uv.x, vertical_flip ? 1.0 - uv.y : uv.y);
+  float raw_val = texture(tex, sample_uv).r;
   
   // Normalize the value to 0.0 - 1.0 based on bounds
   float range = vmax - vmin;
@@ -82,6 +89,9 @@ void main(){ frag = color; })";
 TensorDisplayWidget::TensorDisplayWidget(QWidget *p) : QOpenGLWidget(p) {
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   setMinimumSize(0, 0);
+  setFocusPolicy(Qt::StrongFocus);
+  setMouseTracking(true);
+  slice_overlay_ = new SliceNavigationOverlay(this);
 
   auto *layout = new QVBoxLayout(this);
   layout->setContentsMargins(24, 24, 24, 24);
@@ -103,6 +113,8 @@ void TensorDisplayWidget::set_fixed_aspect(std::optional<QSize> size) {
   HOLOVIBES_CHECK(!size || size->height() > 0);
   fixed_aspect_size_ = size;
   updateGeometry();
+  refresh_slice_overlay();
+  update();
 }
 
 bool TensorDisplayWidget::hasHeightForWidth() const { return fixed_aspect_size_.has_value(); }
@@ -177,6 +189,7 @@ void TensorDisplayWidget::initializeGL() {
   vmin_loc_     = glGetUniformLocation(prog_, "vmin");
   vmax_loc_     = glGetUniformLocation(prog_, "vmax");
   invert_display_loc_ = glGetUniformLocation(prog_, "invert_display");
+  vertical_flip_loc_ = glGetUniformLocation(prog_, "vertical_flip");
 
   glGenTextures(1, &tex_);
   glBindTexture(GL_TEXTURE_2D, tex_);
@@ -193,6 +206,7 @@ void TensorDisplayWidget::initializeGL() {
 
   initializeColormaps();
   initializeReticle();
+  restore_frame_ = retain_frame_ && !retained_frame_.isEmpty();
 }
 
 void TensorDisplayWidget::initializeColormaps() {
@@ -302,9 +316,6 @@ void TensorDisplayWidget::updateTexture(const void *pixels, int w, int h,
 
 void TensorDisplayWidget::presentTensor(const QByteArray &bytes, int w, int h,
                                         holoflow::core::DType dtype) {
-  if (!isVisible() || !isValid())
-    return;
-
   qsizetype need = qsizetype(w) * qsizetype(h);
 
   if (dtype == holoflow::core::DType::U16) {
@@ -316,8 +327,23 @@ void TensorDisplayWidget::presentTensor(const QByteArray &bytes, int w, int h,
   if (w <= 0 || h <= 0 || bytes.size() < need)
     return;
 
+  if (retain_frame_) {
+    retained_frame_ = bytes;
+    retained_size_  = QSize(w, h);
+    retained_dtype_ = dtype;
+    restore_frame_  = true;
+  }
+  if (!isVisible() || !isValid()) {
+    if (retain_frame_) {
+      // Content is available even before this tab receives its first paint event.
+      emit tensorDisplayed();
+      update();
+    }
+    return;
+  }
   makeCurrent();
   updateTexture(reinterpret_cast<const void *>(bytes.constData()), w, h, dtype);
+  restore_frame_ = false;
   doneCurrent();
 
   waiting_timer_->stop();
@@ -328,30 +354,20 @@ void TensorDisplayWidget::presentTensor(const QByteArray &bytes, int w, int h,
 
 void TensorDisplayWidget::resizeGL(int, int) { updateLetterboxViewport(); }
 
+QRect TensorDisplayWidget::getLetterboxRect() const {
+  const int w = width(), h = height();
+  if (fit_to_panel_ || img_w_ <= 0 || img_h_ <= 0 || w <= 0 || h <= 0)
+    return rect();
+  const QSize aspect = fixed_aspect_size_.value_or(QSize(img_w_, img_h_));
+  const QSize size   = aspect.scaled(w, h, Qt::KeepAspectRatio);
+  return QRect(QPoint((w - size.width()) / 2, (h - size.height()) / 2), size);
+}
 void TensorDisplayWidget::updateLetterboxViewport() {
-  const int widget_w = std::max(0, width());
-  const int widget_h = std::max(0, height());
-  if (img_w_ <= 0 || img_h_ <= 0 || widget_w <= 0 || widget_h <= 0) {
-    glViewport(0, 0, widget_w, widget_h);
-    return;
-  }
-
-  const int aspect_w = fixed_aspect_size_ ? fixed_aspect_size_->width() : img_w_;
-  const int aspect_h = fixed_aspect_size_ ? fixed_aspect_size_->height() : img_h_;
-
-  const float wnd = float(widget_w) / float(widget_h);
-  const float img = float(aspect_w) / float(aspect_h);
-  if (wnd > img) {
-    int h = widget_h;
-    int w = int(img * h);
-    int x = (widget_w - w) / 2;
-    glViewport(x, 0, w, h);
-  } else {
-    int w = widget_w;
-    int h = int(w / img);
-    int y = (widget_h - h) / 2;
-    glViewport(0, y, w, h);
-  }
+  const auto image = getLetterboxRect();
+  const auto dpr   = devicePixelRatioF();
+  glViewport(qRound(image.x() * dpr), qRound((height() - image.y() - image.height()) * dpr),
+             qRound(image.width() * dpr), qRound(image.height() * dpr));
+  refresh_slice_overlay();
 }
 
 void TensorDisplayWidget::set_reticle_enabled(bool enabled) {
@@ -389,10 +405,13 @@ void TensorDisplayWidget::show_waiting_placeholder(const QString &message, int d
 }
 
 void TensorDisplayWidget::apply_waiting_placeholder() {
+  retained_frame_.clear();
+  restore_frame_ = false;
   waiting_label_->setText(pending_waiting_message_);
   waiting_label_->show();
   img_w_ = 0;
   img_h_ = 0;
+  refresh_slice_overlay();
   update();
 }
 
@@ -455,6 +474,13 @@ void TensorDisplayWidget::drawRegistrationEllipse() {
 }
 
 void TensorDisplayWidget::paintGL() {
+  if (restore_frame_ && !retained_frame_.isEmpty()) {
+    updateTexture(retained_frame_.constData(), retained_size_.width(), retained_size_.height(),
+                  retained_dtype_);
+    restore_frame_ = false;
+    waiting_label_->hide();
+    emit tensorDisplayed();
+  }
   if (img_w_ <= 0 || img_h_ <= 0) {
     const QColor background = palette().color(QPalette::Window);
     glClearColor(background.redF(), background.greenF(), background.blueF(), 1.0f);
@@ -472,6 +498,7 @@ void TensorDisplayWidget::paintGL() {
   // Pass bounds
   glUniform1f(vmin_loc_, vmin_);
   glUniform1f(vmax_loc_, vmax_);
+  glUniform1i(vertical_flip_loc_, vertical_flip_ ? 1 : 0);
   glUniform1i(invert_display_loc_, display_inverted_ ? 1 : 0);
 
   // Bind Main Image Texture
@@ -492,6 +519,117 @@ void TensorDisplayWidget::paintGL() {
 
   drawReticle();
   drawRegistrationEllipse();
+}
+
+void TensorDisplayWidget::set_retain_frame(bool enabled) {
+  retain_frame_ = enabled;
+  if (!enabled) {
+    retained_frame_.clear();
+    restore_frame_ = false;
+  }
+}
+void TensorDisplayWidget::set_fit_to_panel(bool enabled) {
+  if (fit_to_panel_ == enabled)
+    return;
+  fit_to_panel_ = enabled;
+  refresh_slice_overlay();
+  updateGeometry();
+  update();
+}
+void TensorDisplayWidget::set_vertical_flip(bool enabled) {
+  if (vertical_flip_ == enabled)
+    return;
+  vertical_flip_ = enabled;
+  refresh_slice_overlay();
+  update();
+}
+
+void TensorDisplayWidget::set_slice_navigation_enabled(bool enabled) {
+  if (slice_navigation_ == enabled)
+    return;
+  slice_navigation_ = enabled;
+  slices_unlocked_  = false;
+  refresh_slice_overlay();
+}
+void TensorDisplayWidget::set_slice_guides(const std::vector<QRectF> &bands) {
+  if (slice_bands_ == bands)
+    return;
+  slice_bands_ = bands;
+  refresh_slice_overlay();
+}
+void TensorDisplayWidget::refresh_slice_overlay() {
+  if (!slice_overlay_)
+    return;
+  slice_overlay_->setGeometry(rect());
+  const bool visible = slice_navigation_ && img_w_ > 0 && img_h_ > 0;
+  slice_overlay_->setVisible(visible);
+  if (!visible)
+    return;
+  auto bands = slice_bands_;
+  if (!vertical_flip_)
+    for (auto &band : bands)
+      band.moveTop(1.0 - band.y() - band.height());
+  const QString hint = !hasFocus()        ? tr("Click view | Space: unlock slices")
+                       : slices_unlocked_ ? tr("Slices unlocked | Move mouse | Space: lock")
+                                          : tr("Slices locked | Space: unlock");
+  slice_overlay_->set_state(getLetterboxRect(), bands, hint);
+  slice_overlay_->raise();
+}
+bool TensorDisplayWidget::event(QEvent *event) {
+  if (slice_navigation_ && event->type() == QEvent::ShortcutOverride &&
+      static_cast<QKeyEvent *>(event)->key() == Qt::Key_Space) {
+    event->accept();
+    return true;
+  }
+  return QOpenGLWidget::event(event);
+}
+void TensorDisplayWidget::keyPressEvent(QKeyEvent *event) {
+  if (slice_navigation_ && event->key() == Qt::Key_Space) {
+    if (!event->isAutoRepeat()) {
+      slices_unlocked_ = !slices_unlocked_;
+      refresh_slice_overlay();
+    }
+    event->accept();
+    return;
+  }
+  QOpenGLWidget::keyPressEvent(event);
+}
+void TensorDisplayWidget::request_slice_position(const QPointF &position) {
+  const auto image = getLetterboxRect();
+  if (!slice_navigation_ || !slices_unlocked_ || !hasFocus() || img_w_ <= 0 || img_h_ <= 0 ||
+      !image.contains(position.toPoint()) || image.isEmpty())
+    return;
+  const double x = std::clamp((position.x() - image.x()) / image.width(), 0.0, 1.0);
+  double       y = std::clamp((position.y() - image.y()) / image.height(), 0.0, 1.0);
+  if (!vertical_flip_)
+    y = 1.0 - y;
+  emit slice_position_requested(x, y);
+}
+void TensorDisplayWidget::mousePressEvent(QMouseEvent *event) {
+  if (slice_navigation_ && event->button() == Qt::LeftButton) {
+    setFocus(Qt::MouseFocusReason);
+    request_slice_position(event->position());
+    event->accept();
+    return;
+  }
+  QOpenGLWidget::mousePressEvent(event);
+}
+void TensorDisplayWidget::mouseMoveEvent(QMouseEvent *event) {
+  request_slice_position(event->position());
+  QOpenGLWidget::mouseMoveEvent(event);
+}
+void TensorDisplayWidget::focusInEvent(QFocusEvent *event) {
+  QOpenGLWidget::focusInEvent(event);
+  refresh_slice_overlay();
+}
+void TensorDisplayWidget::focusOutEvent(QFocusEvent *event) {
+  slices_unlocked_ = false;
+  QOpenGLWidget::focusOutEvent(event);
+  refresh_slice_overlay();
+}
+void TensorDisplayWidget::resizeEvent(QResizeEvent *event) {
+  QOpenGLWidget::resizeEvent(event);
+  refresh_slice_overlay();
 }
 
 } // namespace holovibes::ui

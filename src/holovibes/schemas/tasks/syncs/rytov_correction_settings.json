@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RytovCorrectionSettings",
+  "type": "object",
+  "properties": {
+    "polynomial_degree": {
+      "type": "integer",
+      "default": 5,
+      "minimum": 0,
+      "maximum": 8
+    },
+    "sample_step": {
+      "type": "integer",
+      "default": 5,
+      "minimum": 1
+    },
+    "background_margin": {
+      "type": "integer",
+      "default": 5,
+      "minimum": 0
+    },
+    "mask_threshold": {
+      "type": "integer",
+      "default": 45,
+      "minimum": 0,
+      "maximum": 254
+    },
+    "unwrap_phase": {
+      "type": "boolean",
+      "default": true
+    },
+    "amplitude_floor": {
+      "type": "number",
+      "default": 0.01,
+      "minimum": 1e-10,
+      "maximum": 1
+    },
+    "damping_global": {
+      "type": "number",
+      "default": 0.0003,
+      "minimum": 0
+    },
+    "damping_local": {
+      "type": "number",
+      "default": 0.1,
+      "minimum": 0
+    },
+    "gradient_margin": {
+      "type": "integer",
+      "default": 2,
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false
+}

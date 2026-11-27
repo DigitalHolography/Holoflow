@@ -136,8 +136,7 @@ private:
   std::string_view                   phase_name_;
 };
 
-[[noreturn]] inline void
-log_and_abort_current_exception(std::string_view thread_name, std::string_view node_name,
+inline void log_current_exception(std::string_view thread_name, std::string_view node_name,
                                 const Scheduler::FailureCallback &failure_callback,
                                 std::atomic_flag                 &failure_dumped) {
   std::string error_message;
@@ -162,7 +161,6 @@ log_and_abort_current_exception(std::string_view thread_name, std::string_view n
   }
 
   logger()->flush();
-  std::abort();
 }
 
 } // namespace
@@ -381,6 +379,9 @@ private:
   std::map<std::string, holoflow_event::Router::NodeHandles> event_handles_;
   std::atomic_flag                                           failure_dumped_ = ATOMIC_FLAG_INIT;
   Scheduler::FailureCallback                                 failure_callback_;
+  std::mutex                                                 failure_mutex_;
+  std::exception_ptr                                          failure_;
+  void capture_failure();
 
   std::size_t              terminal_nodes_ = 0;          ///< Number of graph terminal nodes.
   std::atomic<std::size_t> completed_terminal_nodes_{0}; ///< Terminal nodes that reached EOF.
@@ -434,7 +435,11 @@ Scheduler::Impl::Impl(const GraphPlan &graph, const std::vector<Section> &sectio
 Scheduler::Impl::~Impl() {
   if (is_running() || paused_.load()) {
     request_stop();
-    wait();
+    try {
+      wait();
+    } catch (...) {
+      // Destructors must not propagate a failure from a worker thread.
+    }
   } else {
     stop_metrics_thread();
   }
@@ -481,6 +486,10 @@ void Scheduler::Impl::start() {
   const bool resume = paused_.exchange(false) && !aborted_.load();
   aborted_.store(false);
   stop_.store(false);
+  {
+    std::lock_guard lock(failure_mutex_);
+    failure_ = nullptr;
+  }
   {
     std::lock_guard lock(const_init_mutex_);
     const_init_sections_ready_ = 0;
@@ -622,7 +631,20 @@ void Scheduler::Impl::wait() {
                    report["ordinary_iterations"].dump(), report["pointer_misses"].dump(),
                    report["tuple_misses"].dump());
   }
+  std::exception_ptr failure;
+  {
+    std::lock_guard lock(failure_mutex_);
+    failure = failure_;
+  }
+  if (failure)
+    std::rethrow_exception(failure);
   // TODO: Is this really the best place to reset running_?
+}
+
+void Scheduler::Impl::capture_failure() {
+  std::lock_guard lock(failure_mutex_);
+  if (!failure_)
+    failure_ = std::current_exception();
 }
 
 bool Scheduler::Impl::is_running() const { return running_.load(); }
@@ -755,10 +777,10 @@ void Scheduler::Impl::run_router() {
     }
     logger()->info("[Scheduler::run_router] Event router stopped");
   } catch (...) {
+    capture_failure();
     stop_.store(true);
     const_init_cv_.notify_all();
-    log_and_abort_current_exception("Scheduler::run_router", {}, failure_callback_,
-                                    failure_dumped_);
+    log_current_exception("Scheduler::run_router", {}, failure_callback_, failure_dumped_);
   }
 }
 
@@ -1039,11 +1061,12 @@ void Scheduler::Impl::run_section(int section_id) {
       checkpoint = SectionCheckpoint{};
     }
   } catch (...) {
+    capture_failure();
     aborted_.store(true);
     paused_.store(false);
     stop_.store(true);
     const_init_cv_.notify_all();
-    log_and_abort_current_exception(
+    log_current_exception(
         std::format("Scheduler::run_section section={} id={}", sec.name, section_id),
         current_node_name, failure_callback_, failure_dumped_);
   }

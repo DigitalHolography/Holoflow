@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GPSRefinement3DSettings",
+  "type": "object",
+  "properties": {
+    "delta_n_min": {
+      "type": "number",
+      "default": -0.5
+    },
+    "delta_n_max": {
+      "type": "number",
+      "default": 0.5
+    },
+    "kappa_min": {
+      "type": "number",
+      "default": 0
+    },
+    "kappa_max": {
+      "type": "number",
+      "default": 100000
+    },
+    "iterations": {
+      "type": "integer",
+      "default": 10,
+      "minimum": 1,
+      "maximum": 1000
+    }
+  },
+  "additionalProperties": false
+}

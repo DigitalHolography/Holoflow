@@ -66,6 +66,7 @@ void to_json(nlohmann::json &j, const HolofileSettings &hs) {
   j = {
       {"path", hs.path},           {"load_kind", hs.load_kind},   {"start_frame", hs.start_frame},
       {"end_frame", hs.end_frame}, {"batch_size", hs.batch_size}, {"keep_cursor", hs.keep_cursor},
+      {"repeat", hs.repeat},
   };
 
   if (hs.max_fps.has_value()) {
@@ -84,6 +85,7 @@ void from_json(const nlohmann::json &j, HolofileSettings &hs) {
     hs.max_fps = j.at("max_fps").get<int>();
   }
   hs.keep_cursor = j.value("keep_cursor", true);
+  hs.repeat      = j.value("repeat", true);
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -223,7 +225,9 @@ public:
     size_t bytes_per_frame  = bits_per_frame / 8;
 
     // Loop back to start when EOF would be bypassed when reading next batch
-    if (frame_idx + settings.batch_size > settings.end_frame) {
+    if (settings.batch_size > settings.end_frame - frame_idx) {
+      if (!settings.repeat)
+        return holoflow::core::OpResult::Eof;
       if (settings.load_kind == HolofileSettings::LoadKind::Live) {
         reader->seek(settings.start_frame);
       }

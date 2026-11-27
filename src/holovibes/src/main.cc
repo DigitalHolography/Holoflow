@@ -27,8 +27,7 @@
 #include "ui/main_window.hh"
 #include "ui/theme.hh"
 #include "ui/widgets/quiver_widget.hh"
-
-#include "holonp/arange.hh"
+#include <spdlog/cfg/env.h>
 
 int main(int argc, char **argv) {
 #if defined(HOLOFLOW_COVERAGE_PROBE)
@@ -37,19 +36,8 @@ int main(int argc, char **argv) {
   }
 #endif
 
-  spdlog::set_level(spdlog::level::debug);
-
-  holonp::ArangeSettings s{
-      .start  = 0.0,
-      .stop   = 10.0,
-      .step   = 0.5,
-      .dtype  = holoflow::core::DType::F32,
-      .device = holoflow::core::MemLoc::Device,
-  };
-
-  nlohmann::json j = s;
-
-  spdlog::info("ArangeSettings as JSON: {}", j.dump(2));
+  spdlog::set_level(spdlog::level::warn);
+  spdlog::cfg::load_env_levels();
 
   QCoreApplication::setOrganizationName("Digital Holography Foundation");
   QCoreApplication::setApplicationName("Holovibes");

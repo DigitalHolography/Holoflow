@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MTDFieldRecoverySettings",
+  "type": "object",
+  "properties": {
+    "half_size": {
+      "type": "integer",
+      "default": 125,
+      "minimum": 1,
+      "maximum": 16384
+    },
+    "center_x": {
+      "type": "integer",
+      "default": 247,
+      "minimum": 0
+    },
+    "center_y": {
+      "type": "integer",
+      "default": 247,
+      "minimum": 0
+    },
+    "tukey_alpha": {
+      "type": "number",
+      "default": 0.1,
+      "minimum": 0,
+      "maximum": 1
+    }
+  },
+  "additionalProperties": false
+}

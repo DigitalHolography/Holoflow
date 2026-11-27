@@ -25,6 +25,7 @@
 #include <QSignalBlocker>
 #include <QStandardItemModel>
 #include <QStandardPaths>
+#include <QVBoxLayout>
 #include <algorithm>
 #include <limits>
 
@@ -265,7 +266,21 @@ QDoubleSpinBox *ImageRenderingWidget::spatial_contrast_display_max() {
 AutoFocusWidget *ImageRenderingWidget::autofocus_widget() { return autofocus_widget_; }
 
 void ImageRenderingWidget::setup_ui() {
-  auto *layout = new QGridLayout(this);
+  auto *outer = new QVBoxLayout(this);
+  outer->setContentsMargins(0, 0, 0, 0);
+  legacy_page_ = new QWidget(this);
+  outer->addWidget(legacy_page_);
+  mtd_controls_ = new MTDProcessingWidget(this);
+  outer->addWidget(mtd_controls_);
+  mtd_controls_->hide();
+  focus_controls_ = new FocusProcessingWidget(this);
+  outer->addWidget(focus_controls_);
+  focus_controls_->hide();
+  connect(focus_controls_, &FocusProcessingWidget::settings_changed, this,
+          &ImageRenderingWidget::settings_changed);
+  connect(mtd_controls_, &MTDProcessingWidget::settings_changed, this,
+          &ImageRenderingWidget::settings_changed);
+  auto *layout = new QGridLayout(legacy_page_);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setHorizontalSpacing(6);
   layout->setVerticalSpacing(4);
@@ -553,6 +568,24 @@ void ImageRenderingWidget::clear_validation_styles() {
   clear_validation_error(convolution_combo_);
   clear_validation_error(spatial_contrast_window_size_);
   clear_validation_error(spatial_contrast_method_);
+}
+
+void ImageRenderingWidget::set_mtd_mode(bool enabled) {
+  focus_controls_->hide();
+  legacy_page_->setVisible(!enabled);
+  mtd_controls_->setVisible(enabled);
+  autofocus_widget_->setEnabled(!enabled);
+  autofocus_widget_->setVisible(!enabled);
+  setTitle(enabled ? tr("MTD RECONSTRUCTION") : tr("IMAGE RENDERING"));
+}
+
+void ImageRenderingWidget::set_focus_mode(bool enabled) {
+  legacy_page_->setVisible(!enabled);
+  mtd_controls_->hide();
+  focus_controls_->setVisible(enabled);
+  autofocus_widget_->setEnabled(!enabled);
+  autofocus_widget_->setVisible(!enabled);
+  setTitle(enabled ? tr("TOMOGRAPHIC - HOLO VOLUME") : tr("IMAGE RENDERING"));
 }
 
 } // namespace holovibes::ui

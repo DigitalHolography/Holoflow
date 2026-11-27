@@ -58,6 +58,10 @@ enum class SettingsField {
   AutofocusNbSubaps,
   AutofocusNbIter,
   SignalPlotTimeWindow,
+  MTDReconstruction,
+  MTDView,
+  FocusReconstruction,
+  FocusView,
 };
 
 struct ValidationIssue {
@@ -76,6 +80,7 @@ struct ValidationResult {
 };
 
 struct ValidationContext {
+  std::optional<std::string> mtd_error;
   bool                       load_path_exists     = false;
   bool                       camera_config_exists = false;
   bool                       camera_config_valid  = false;

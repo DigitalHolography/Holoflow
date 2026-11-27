@@ -323,7 +323,10 @@ void Compiler::Impl::setup_logging() {
     logger_ = spdlog::stdout_color_mt("compiler");
   }
   ScopedTrace configuration("Configure Compiler Logger", "detail");
-  logger_->set_level(config_.verbose_tracing ? spdlog::level::trace : spdlog::level::info);
+  logger_->set_level(config_.verbose_tracing ? spdlog::level::trace
+                                             : config_.log_dir.empty()
+                                                   ? spdlog::default_logger()->level()
+                                                   : spdlog::level::info);
 }
 
 void Compiler::Impl::publish_log() noexcept {

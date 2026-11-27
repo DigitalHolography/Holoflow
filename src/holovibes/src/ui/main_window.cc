@@ -13,6 +13,8 @@
 // limitations under the License.
 
 #include "ui/main_window.hh"
+#include "holotask/pipelines/mtd.hh"
+#include "ui/widgets/validation_style.hh"
 
 #include <QAction>
 #include <QCheckBox>
@@ -650,7 +652,8 @@ void MainWindow::refresh_visualization_availability() {
   }
 
   auto      *autofocus         = render_widget_->autofocus_widget();
-  const bool autofocus_enabled = autofocus->is_enabled();
+  const bool mtd               = import_widget_->is_volume_mode();
+  const bool autofocus_enabled = !mtd && autofocus->is_enabled();
   const bool has_zernike_order =
       autofocus->is_z2_enabled() || autofocus->is_z3_enabled() || autofocus->is_z4_enabled() ||
       autofocus->is_z5_enabled() || autofocus->is_z6_enabled() || autofocus->is_z7_enabled() ||
@@ -678,15 +681,15 @@ void MainWindow::refresh_visualization_availability() {
       {"shack_hartmann_xcorr",
        {autofocus_enabled && single_reference_slopes,
         autofocus_enabled ? xcorr_message : autofocus_message}},
+      {"xy_raw", {!mtd, tr("Raw playback is not generated in tomographic volume mode.")}},
       {"registration_xcorr",
        {registration_enabled, registration_enabled
                                   ? QString{}
                                   : tr("Enable Registration to generate this visualization.")}},
-      {"xy_raw", {true, {}}},
       {"raw_spectrum", {false, spectrum_message}},
       {"processed_spectrum", {false, spectrum_message}},
-      {"xz_processed", {false, cuts_message}},
-      {"yz_processed", {false, cuts_message}},
+      {"xz_processed", {mtd, cuts_message}},
+      {"yz_processed", {mtd, cuts_message}},
       {"pipeline_graph", {true, {}}},
   });
 }
@@ -828,6 +831,8 @@ void MainWindow::refresh_command_bar() {
     return;
   }
 
+  import_widget_->set_source_editing_enabled(!pipeline_starting_ && !pipeline_running_ &&
+                                             !pipeline_paused_ && !update_in_progress_);
   const QString primary_action = pipeline_running_  ? QStringLiteral("Pause")
                                  : pipeline_paused_ ? QStringLiteral("Resume")
                                                     : QStringLiteral("Start");
@@ -847,7 +852,8 @@ void MainWindow::refresh_command_bar() {
   } else if (update_in_progress_) {
     set_status_label(pipeline_status_label_, "Updating", "warning");
   } else if (pipeline_running_) {
-    set_status_label(pipeline_status_label_, "Live", "success");
+    set_status_label(pipeline_status_label_,
+                     import_widget_->is_volume_mode() ? "Volume ready" : "Live", "success");
   } else if (pipeline_paused_) {
     set_status_label(pipeline_status_label_, "Paused", "warning");
   } else {
@@ -866,7 +872,7 @@ void MainWindow::refresh_command_bar() {
   view_status_label_->setText(
       QString("%1 %2").arg(render_widget_->get_image_mode(), view_widget_->get_image_type()));
 
-  if (!pipeline_running_) {
+  if (!pipeline_running_ || import_widget_->is_volume_mode()) {
     fps_status_label_->setText("--");
   }
 
@@ -881,6 +887,22 @@ void MainWindow::refresh_command_bar() {
 
 void MainWindow::save_persistent_state() {
   QSettings settings;
+  settings.setValue("import/mtd_mode", import_widget_->is_mtd_mode());
+  settings.setValue("import/focus_mode", import_widget_->is_focus_mode());
+  settings.setValue("import/focus_path", focus_loaded_path_);
+  settings.setValue("import/focus_dims", focus_dims_);
+  settings.setValue(
+      "rendering/focus",
+      QString::fromStdString(nlohmann::json(render_widget_->focus_controls()->settings()).dump()));
+  settings.setValue(
+      "view/focus",
+      QString::fromStdString(nlohmann::json(view_widget_->focus_controls()->settings()).dump()));
+  settings.setValue(
+      "rendering/mtd",
+      QString::fromStdString(nlohmann::json(render_widget_->mtd_controls()->settings()).dump()));
+  settings.setValue(
+      "view/mtd",
+      QString::fromStdString(nlohmann::json(view_widget_->mtd_controls()->settings()).dump()));
 
   settings.beginGroup("preferences");
   settings.setValue("dump_runtime_failure_graphs",
@@ -1239,6 +1261,73 @@ void MainWindow::restore_persistent_state() {
   migrate_legacy_view_preference(QStringLiteral("shack_hartmann_xcorr"),
                                  legacy_shack_hartmann_xcorr);
 
+  try {
+    if (settings.contains("rendering/mtd"))
+      render_widget_->mtd_controls()->set_settings(
+          nlohmann::json::parse(settings.value("rendering/mtd").toString().toStdString())
+              .get<pipeline::MTDReconstructionSettings>());
+    view_widget_->mtd_controls()->set_extent(render_widget_->mtd_controls()->settings().dimension);
+    if (settings.contains("view/mtd"))
+      view_widget_->mtd_controls()->set_settings(
+          nlohmann::json::parse(settings.value("view/mtd").toString().toStdString())
+              .get<pipeline::MTDViewSettings>());
+  } catch (const std::exception &error) {
+    logger()->warn("Ignoring invalid saved MTD settings: {}", error.what());
+  }
+  // Loading saved settings must not replace them with dataset defaults.
+  mtd_loaded_path_ = import_widget_->get_file_path();
+  import_widget_->set_mtd_mode(settings.value("import/mtd_mode", false).toBool());
+  try {
+    if (settings.contains("rendering/focus"))
+      render_widget_->focus_controls()->set_settings(
+          nlohmann::json::parse(settings.value("rendering/focus").toString().toStdString())
+              .get<holotask::pipelines::HoloFocusSettings>());
+    focus_loaded_path_ =
+        settings
+            .value("import/focus_path", settings.value("import/focus_mode", false).toBool()
+                                            ? import_widget_->get_file_path()
+                                            : QString{})
+            .toString();
+    const auto saved_focus_dims = settings.value("import/focus_dims", QSize(512, 512)).toSize();
+    if (saved_focus_dims.width() > 0 && saved_focus_dims.width() <= 16384 &&
+        saved_focus_dims.height() > 0 && saved_focus_dims.height() <= 16384)
+      focus_dims_ = saved_focus_dims;
+    // Restore the inactive mode too. Read its own source dimensions before setting indices.
+    if (!focus_loaded_path_.isEmpty()) {
+      render_widget_->focus_controls()->load_calibration(focus_loaded_path_.toStdString(), false);
+      try {
+        const auto c =
+            holotask::pipelines::inspect_holo_calibration(focus_loaded_path_.toStdString());
+        focus_dims_ = QSize(c.width, c.height);
+      } catch (...) {
+      }
+    }
+    refresh_focus_geometry();
+    if (settings.contains("view/focus"))
+      view_widget_->focus_controls()->set_settings(
+          nlohmann::json::parse(settings.value("view/focus").toString().toStdString())
+              .get<pipeline::MTDViewSettings>());
+    if (settings.contains("rendering/focus") &&
+        !nlohmann::json::parse(settings.value("rendering/focus").toString().toStdString())
+             .contains("method")) {
+      view_widget_->focus_controls()->set_settings({.x             = 0,
+                                                    .y             = 0,
+                                                    .z             = 224,
+                                                    .component     = "real",
+                                                    .minimum       = 0,
+                                                    .maximum       = 1,
+                                                    .band_width    = 20,
+                                                    .x_width       = 20,
+                                                    .y_width       = 20,
+                                                    .auto_contrast = true,
+                                                    .fit_panel     = false});
+    }
+    if (settings.value("import/focus_mode", false).toBool())
+      import_widget_->set_focus_mode(true);
+  } catch (const std::exception &error) {
+    logger()->warn("Ignoring invalid saved focus settings: {}", error.what());
+  }
+  refresh_mtd_mode();
   update_recording_path_preview();
   refresh_visualization_availability();
   display_workspace_->set_pipeline_running(false);
@@ -1368,6 +1457,29 @@ void MainWindow::initialize_pipeline_manager() {
 }
 
 void MainWindow::connect_manager_signals() {
+  connect(pipeline_manager_, &pipeline::Manager::focus_playback_position,
+          render_widget_->focus_controls(), &FocusProcessingWidget::set_playback_position);
+  const std::array displays{xy_processed_widget_, xz_processed_widget_, yz_processed_widget_};
+  for (int plane = 0; plane < 3; ++plane)
+    connect(displays[plane], &TensorDisplayWidget::slice_position_requested, this,
+            [this, plane](double x, double y) { move_volume_slices(plane, x, y); });
+  connect(pipeline_manager_, &pipeline::Manager::focus_volume_ready, this,
+          [this](int width, int height, int depth) {
+            if (!import_widget_->is_focus_mode() ||
+                depth != (render_widget_->focus_controls()->settings().method == "holovibes_stft"
+                              ? render_widget_->focus_controls()->settings().window
+                              : render_widget_->focus_controls()->settings().optics.planes))
+              return;
+            focus_dims_ = QSize(width, height);
+            refresh_focus_geometry();
+          });
+  connect(pipeline_manager_, &pipeline::Manager::mtd_volume_ready, this,
+          [this](int dimension, double pitch) {
+            if (dimension != render_widget_->mtd_controls()->settings().dimension)
+              return;
+            mtd_voxel_pitch_m_ = pitch;
+            view_widget_->mtd_controls()->set_extent(dimension, pitch);
+          });
   connect(pipeline_manager_, &pipeline::Manager::start_pipeline_success, this,
           &MainWindow::on_start_pipeline_success);
 
@@ -1445,7 +1557,20 @@ void MainWindow::connect_import_controls() {
   connect(import_widget_, &ImportWidget::start_clicked, this, &MainWindow::on_import_start_clicked);
   connect(import_widget_, &ImportWidget::stop_clicked, this, &MainWindow::on_import_stop_clicked);
   connect(import_widget_, &ImportWidget::browse_clicked, this, [=]() {
-    QString file = QFileDialog::getOpenFileName(this, tr("Select File"));
+    if (import_widget_->is_mtd_mode()) {
+      const auto folder = QFileDialog::getExistingDirectory(this, tr("Select MTD ACQUIS folder"),
+                                                            import_widget_->get_file_path());
+      if (folder.isEmpty())
+        return;
+      import_widget_->set_file_path(folder);
+      refresh_mtd_mode();
+      validate_inputs();
+      update_if_running();
+      return;
+    }
+    QString file = QFileDialog::getOpenFileName(this, tr("Select hologram recording"),
+                                                import_widget_->get_file_path(),
+                                                tr("Hologram recordings (*.holo);;All files (*)"));
     if (file.isEmpty()) {
       return;
     }
@@ -1461,7 +1586,8 @@ void MainWindow::connect_import_controls() {
         import_widget_->set_start_index(0);
         file_selected = true;
 
-        if (!QSettings().value(kKeepCurrentConfigKey, false).toBool() &&
+        if (!import_widget_->is_focus_mode() &&
+            !QSettings().value(kKeepCurrentConfigKey, false).toBool() &&
             reader.footer().has_value()) {
           auto               footer        = reader.footer().value();
           pipeline::Settings prev_settings = get_pipeline_settings();
@@ -1475,6 +1601,7 @@ void MainWindow::connect_import_controls() {
       logger()->error("failed to open \"{}\": \"{}\"", file.toStdString(), e.what());
     }
     if (file_selected) {
+      refresh_mtd_mode();
       refresh_command_bar();
       if (update_in_progress_) {
         pending_import_update_ = true;
@@ -1655,6 +1782,7 @@ void MainWindow::show_pipeline_error_popup(const QString &message) {
 }
 
 void MainWindow::on_start_pipeline_success() {
+  pipeline_starting_ = false;
   logger()->info("[MainWindow::on_start_pipeline_success]");
   pipeline_running_      = true;
   pipeline_paused_       = false;
@@ -1666,6 +1794,14 @@ void MainWindow::on_start_pipeline_success() {
   export_widget_->set_record_enabled(!export_in_progress_ && export_widget_->isChecked());
   export_widget_->set_stop_enabled(export_in_progress_);
 
+  if (import_widget_->is_volume_mode()) {
+    refresh_mtd_displays();
+    if (mtd_update_pending_) {
+      mtd_update_pending_ = false;
+      update_if_running();
+    }
+    return;
+  }
   auto dims = guess_source_dims();
   xy_raw_widget_->set_fixed_aspect(dims);
   dims = processed_display_dims(dims);
@@ -1698,6 +1834,7 @@ void MainWindow::on_start_pipeline_success() {
 }
 
 void MainWindow::on_start_pipeline_failure(const QString &error) {
+  pipeline_starting_ = false;
   logger()->error("[MainWindow::on_start_pipeline_failure]");
   pipeline_running_      = false;
   pipeline_paused_       = false;
@@ -1767,6 +1904,7 @@ void MainWindow::on_stop_pipeline_failure(const QString &error) {
 }
 
 void MainWindow::on_resume_pipeline_success() {
+  pipeline_starting_ = false;
   logger()->info("[MainWindow::on_resume_pipeline_success]");
   pipeline_running_   = true;
   pipeline_paused_    = false;
@@ -1778,9 +1916,14 @@ void MainWindow::on_resume_pipeline_success() {
   refresh_visualization_availability();
   display_workspace_->set_pipeline_running(true);
   refresh_command_bar();
+  if (import_widget_->is_volume_mode() && mtd_update_pending_) {
+    mtd_update_pending_ = false;
+    update_if_running();
+  }
 }
 
 void MainWindow::on_resume_pipeline_failure(const QString &error) {
+  pipeline_starting_ = false;
   logger()->error("[MainWindow::on_resume_pipeline_failure]");
   pipeline_running_   = false;
   pipeline_paused_    = true;
@@ -1797,6 +1940,7 @@ void MainWindow::on_resume_pipeline_failure(const QString &error) {
 }
 
 void MainWindow::reset_pipeline_ui_after_stop() {
+  pipeline_starting_     = false;
   pipeline_running_      = false;
   pipeline_paused_       = false;
   pause_requested_       = false;
@@ -1846,6 +1990,16 @@ void MainWindow::on_metrics_updated(double input_fps) {
 
 void MainWindow::on_update_pipeline_success() {
   logger()->info("[MainWindow::on_update_pipeline_success]");
+  if (import_widget_->is_volume_mode()) {
+    update_in_progress_ = false;
+    import_widget_->set_start_enabled(pipeline_running_ || pipeline_paused_);
+    refresh_mtd_displays();
+    if (mtd_update_pending_) {
+      mtd_update_pending_ = false;
+      update_if_running();
+    }
+    return;
+  }
   update_in_progress_ = false;
   import_widget_->set_start_enabled(pipeline_running_);
   export_widget_->set_record_enabled(!export_in_progress_ && export_widget_->isChecked());
@@ -1931,8 +2085,16 @@ void MainWindow::on_raw_record_flushing_finished(size_t id) {
 void MainWindow::closeEvent(QCloseEvent *event) {
   save_persistent_state();
 
-  if (pipeline_manager_ && pipeline_running_) {
-    pipeline_manager_->stop_pipeline();
+  if (pipeline_manager_) {
+    if (import_widget_->is_volume_mode() && pipeline_manager_thread_->isRunning() &&
+        (pipeline_running_ || pipeline_starting_ || resume_in_progress_)) {
+      // Playback and its timer belong to the manager thread. Pending startup/resume
+      // finishes before this queued stop; volume shutdown never calls back into the GUI.
+      QMetaObject::invokeMethod(pipeline_manager_, &pipeline::Manager::stop_pipeline,
+                                Qt::BlockingQueuedConnection);
+    } else if (pipeline_running_) {
+      pipeline_manager_->stop_pipeline();
+    }
   }
 
   if (pipeline_manager_thread_) {
@@ -1956,6 +2118,7 @@ void MainWindow::on_import_start_clicked() {
   }
 
   if (pipeline_paused_ && !paused_settings_dirty_) {
+    pipeline_starting_  = true;
     resume_in_progress_ = true;
     import_widget_->set_start_enabled(false);
     import_widget_->set_stop_enabled(false);
@@ -1966,9 +2129,14 @@ void MainWindow::on_import_start_clicked() {
   }
 
   if (!validate_inputs()) {
+    logger()->warn("[MainWindow::on_import_start_clicked] Invalid settings: {}",
+                   validation_error_message_.toStdString());
+    show_pipeline_error_popup(
+        tr("Cannot start the pipeline. Check these settings:\n%1").arg(validation_error_message_));
     return;
   }
 
+  pipeline_starting_     = true;
   pipeline_paused_       = false;
   paused_settings_dirty_ = false;
   import_widget_->set_start_enabled(false);
@@ -2112,6 +2280,11 @@ void MainWindow::on_raw_record_stopped_failure(const QString &error, std::option
 }
 
 bool MainWindow::validate_inputs() {
+  refresh_mtd_mode();
+  clear_validation_error(view_widget_->mtd_controls());
+  clear_validation_error(view_widget_->focus_controls());
+  clear_validation_error(render_widget_->focus_controls());
+  clear_validation_error(render_widget_->mtd_controls());
   import_widget_->clear_validation_styles();
   export_widget_->clear_validation_styles();
   render_widget_->clear_validation_styles();
@@ -2119,6 +2292,11 @@ bool MainWindow::validate_inputs() {
   render_widget_->autofocus_widget()->clear_validation_styles();
   configure_unsupported_features();
 
+  if (import_widget_->is_mtd_mode()) {
+    view_widget_->mtd_controls()->set_extent(render_widget_->mtd_controls()->settings().dimension,
+                                             mtd_voxel_pitch_m_);
+  }
+  refresh_slice_guides();
   if (!import_widget_->is_source_valid()) {
     auto fp = import_widget_->get_file_path();
     logger()->error("[MainWindow::validate_inputs] source path is not valid: {}", fp.toStdString());
@@ -2147,7 +2325,12 @@ bool MainWindow::validate_inputs() {
     display_dims = QSize(settings.asp_padded_width, settings.asp_padded_height);
   }
   view_widget_->set_xy_extent(display_dims.width(), display_dims.height());
-  const auto result = pipeline::validate_settings(settings, context);
+  const auto  result = pipeline::validate_settings(settings, context);
+  QStringList errors;
+  for (const auto &issue : result.issues)
+    if (issue.severity == pipeline::ValidationSeverity::Error)
+      errors.append(QStringLiteral("- ") + QString::fromStdString(issue.message));
+  validation_error_message_ = errors.join(QLatin1Char('\n'));
   refresh_validation_tooltips(result);
   apply_validation_result(result);
   configure_unsupported_features();
@@ -2160,6 +2343,18 @@ void MainWindow::apply_validation_result(const pipeline::ValidationResult &resul
   for (const auto &issue : result.issues) {
     for (const auto field : issue.fields) {
       switch (field) {
+      case SettingsField::FocusReconstruction:
+        mark_validation_error(render_widget_->focus_controls());
+        break;
+      case SettingsField::FocusView:
+        mark_validation_error(view_widget_->focus_controls());
+        break;
+      case SettingsField::MTDReconstruction:
+        mark_validation_error(render_widget_->mtd_controls());
+        break;
+      case SettingsField::MTDView:
+        mark_validation_error(view_widget_->mtd_controls());
+        break;
       case SettingsField::LoadPath:
         import_widget_->mark_file_invalid();
         break;
@@ -2252,6 +2447,10 @@ void MainWindow::refresh_validation_tooltips(const pipeline::ValidationResult &r
   using pipeline::SettingsField;
 
   const std::array bindings = {
+      FieldBinding{SettingsField::FocusReconstruction, render_widget_->focus_controls()},
+      FieldBinding{SettingsField::FocusView, view_widget_->focus_controls()},
+      FieldBinding{SettingsField::MTDReconstruction, render_widget_->mtd_controls()},
+      FieldBinding{SettingsField::MTDView, view_widget_->mtd_controls()},
       FieldBinding{SettingsField::LoadPath, import_widget_->file_line_edit()},
       FieldBinding{SettingsField::CameraConfigPath, import_widget_->camera_config_combo()},
       FieldBinding{SettingsField::InputSamplingFrequency,
@@ -2304,13 +2503,28 @@ pipeline::ValidationContext
 MainWindow::build_validation_context(const pipeline::Settings &settings) const {
   pipeline::ValidationContext context;
 
-  if (settings.import_source == pipeline::ImportSource::HOLOFILE) {
+  if (settings.import_source == pipeline::ImportSource::MTD_DATASET) {
+    context.load_path_exists = std::filesystem::is_directory(settings.load_path);
+    if (context.load_path_exists) {
+      try {
+        const auto dataset = holotask::pipelines::load_mtd_dataset(
+            settings.load_path, settings.mtd_reconstruction.medium_index);
+        context.source_width = context.source_height = settings.mtd_reconstruction.dimension;
+        context.source_frame_count                   = dataset.frame_count;
+      } catch (const std::exception &error) {
+        context.mtd_error = error.what();
+      }
+    }
+  } else if (settings.import_source == pipeline::ImportSource::HOLOFILE ||
+             settings.import_source == pipeline::ImportSource::HOLO_FOCUS) {
     context.load_path_exists =
         !settings.load_path.empty() && std::filesystem::exists(settings.load_path);
 
     if (context.load_path_exists) {
       try {
-        auto header                = holofile::Reader(settings.load_path.string()).header();
+        auto header = holofile::Reader(settings.load_path.string()).header();
+        if (settings.import_source == pipeline::ImportSource::HOLO_FOCUS)
+          (void)holotask::pipelines::inspect_holo_calibration(settings.load_path);
         context.source_width       = static_cast<int>(header.frame_width);
         context.source_height      = static_cast<int>(header.frame_height);
         context.source_frame_count = static_cast<int>(header.frame_count);
@@ -2421,19 +2635,25 @@ int MainWindow::estimate_pipeline_start_duration() {
 }
 
 void MainWindow::update_if_running() {
-  if (loading_holofile_) {
+  if (loading_holofile_)
+    return;
+  if (pipeline_starting_) {
+    if (import_widget_->is_volume_mode())
+      mtd_update_pending_ = true;
     return;
   }
   if (pipeline_paused_) {
     paused_settings_dirty_ = true;
-    return;
+    if (!import_widget_->is_volume_mode())
+      return;
   }
 
-  if (!pipeline_manager_ || !pipeline_running_) {
+  if (!pipeline_manager_ || (!pipeline_running_ && !pipeline_paused_)) {
     return;
   }
 
   if (update_in_progress_) {
+    mtd_update_pending_ = true;
     return;
   }
 
@@ -2441,7 +2661,8 @@ void MainWindow::update_if_running() {
     return;
   }
 
-  display_workspace_->reset_visualization_content();
+  if (!import_widget_->is_volume_mode())
+    display_workspace_->reset_visualization_content();
   update_in_progress_ = true;
   import_widget_->set_start_enabled(false);
   refresh_command_bar();
@@ -2451,6 +2672,10 @@ void MainWindow::update_if_running() {
 }
 
 QSize MainWindow::guess_source_dims() {
+  if (import_widget_->is_mtd_mode()) {
+    const int dimension = render_widget_->mtd_controls()->settings().dimension;
+    return QSize(dimension, dimension);
+  }
   if (!import_widget_->is_camera_mode()) {
     auto header     = holofile::Reader(import_widget_->get_file_path().toStdString()).header();
     int  src_width  = header.frame_width;
@@ -2479,6 +2704,8 @@ QSize MainWindow::guess_source_dims() {
 }
 
 QSize MainWindow::processed_display_dims(QSize source_dims) const {
+  if (import_widget_->is_volume_mode())
+    return source_dims;
   if (render_widget_->get_image_mode() == "Raw") {
     return source_dims;
   }
@@ -2495,7 +2722,7 @@ QSize MainWindow::processed_display_dims(QSize source_dims) const {
 pipeline::Settings MainWindow::get_pipeline_settings() {
   using namespace holovibes::pipeline;
 
-  Settings s;
+  Settings s{};
 
   // Advanced Settings
   {
@@ -2722,6 +2949,30 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.signal_plot_time_window_seconds = signal_plot_time_window_seconds_;
   }
 
+  s.mtd_reconstruction   = render_widget_->mtd_controls()->settings();
+  s.mtd_view             = view_widget_->mtd_controls()->settings();
+  s.focus_reconstruction = render_widget_->focus_controls()->settings();
+  s.focus_view           = view_widget_->focus_controls()->settings();
+  if (import_widget_->is_mtd_mode()) {
+    s.import_source      = ImportSource::MTD_DATASET;
+    s.load_path          = import_widget_->get_file_path().toStdString();
+    s.mtd_reconstruction = render_widget_->mtd_controls()->settings();
+    s.mtd_view           = view_widget_->mtd_controls()->settings();
+    s.view_3d_cuts       = true;
+    s.view_type          = ViewType::PROCESSED;
+    s.recording_method   = RecordingMethod::NONE;
+    s.autofocus_enabled  = false;
+  }
+  if (import_widget_->is_focus_mode()) {
+    s.import_source        = ImportSource::HOLO_FOCUS;
+    s.load_path            = import_widget_->get_file_path().toStdString();
+    s.focus_reconstruction = render_widget_->focus_controls()->settings();
+    s.focus_view           = view_widget_->focus_controls()->settings();
+    s.view_3d_cuts         = true;
+    s.view_type            = ViewType::PROCESSED;
+    s.recording_method     = RecordingMethod::NONE;
+    s.autofocus_enabled    = false;
+  }
   return s;
 }
 
@@ -2738,7 +2989,25 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
   // --- Import Settings ---
   {
     // Source: camera or file
-    if (s.import_source == ImportSource::HOLOFILE) {
+    if (s.import_source == ImportSource::MTD_DATASET) {
+      import_widget_->set_camera_mode(false);
+      import_widget_->set_file_path(QString::fromStdString(s.load_path.string()));
+      mtd_loaded_path_ = import_widget_->get_file_path();
+      import_widget_->set_mtd_mode(true);
+      render_widget_->mtd_controls()->set_settings(s.mtd_reconstruction);
+      view_widget_->mtd_controls()->set_extent(s.mtd_reconstruction.dimension);
+      view_widget_->mtd_controls()->set_settings(s.mtd_view);
+    } else if (s.import_source == ImportSource::HOLO_FOCUS) {
+      import_widget_->set_camera_mode(false);
+      import_widget_->set_file_path(QString::fromStdString(s.load_path.string()));
+      focus_loaded_path_ = import_widget_->get_file_path();
+      render_widget_->focus_controls()->set_settings(s.focus_reconstruction);
+      render_widget_->focus_controls()->load_calibration(s.load_path, false);
+      import_widget_->set_focus_mode(true);
+      refresh_mtd_mode();
+      view_widget_->focus_controls()->set_settings(s.focus_view);
+    } else if (s.import_source == ImportSource::HOLOFILE) {
+      import_widget_->set_mtd_mode(false);
       import_widget_->set_camera_mode(false);
       import_widget_->set_file_path(QString::fromStdString(s.load_path.string()));
       import_widget_->set_fps_limit(s.load_fps_limit);
@@ -2914,6 +3183,7 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     autofocus->set_use_graph_laplacian(s.autofocus_use_graph_laplacian);
   }
 
+  refresh_mtd_mode();
   configure_unsupported_features();
 }
 
@@ -2924,6 +3194,208 @@ std::string MainWindow::get_selected_camera_config_path() {
   std::string config_path =
       cameraConfigPath.toStdString() + import_widget_->get_camera_config().toStdString() + ".json";
   return config_path;
+}
+
+// -------------------------------------------------------------------------------------------------
+// MTD input configuration and orthogonal volume displays
+// -------------------------------------------------------------------------------------------------
+
+void MainWindow::refresh_mtd_mode() {
+  const bool enabled = import_widget_->is_volume_mode();
+  const bool changed = mtd_ui_mode_ != enabled;
+  mtd_ui_mode_       = enabled;
+  for (auto *display : {xy_processed_widget_, xz_processed_widget_, yz_processed_widget_}) {
+    display->set_retain_frame(enabled);
+    display->set_slice_navigation_enabled(enabled);
+    display->set_vertical_flip(enabled);
+    if (!import_widget_->is_focus_mode())
+      display->set_fit_to_panel(false);
+  }
+  if (import_widget_->is_focus_mode()) {
+    view_widget_->set_focus_mode(true);
+    render_widget_->set_focus_mode(true);
+  } else {
+    view_widget_->set_mtd_mode(enabled);
+    render_widget_->set_mtd_mode(enabled);
+  }
+  export_widget_->setEnabled(!enabled);
+  if (changed && enabled) {
+    const QSignalBlocker blocker(display_workspace_);
+    display_workspace_->set_visualization_enabled("xz_processed", true);
+    display_workspace_->set_visualization_enabled("yz_processed", true);
+  }
+  if (!enabled) {
+    // The regular processed texture is GL_R8: sampling yields values in [0, 1].
+    // The view controls use byte values (1..255) and must not be passed to its shader.
+    xy_processed_widget_->set_value_range(0.F, 1.F);
+  }
+  if (changed && !enabled) {
+    display_workspace_->set_visualization_title("xy_processed", tr("XY Processed"));
+    display_workspace_->set_visualization_title("xz_processed", tr("XZ Processed"));
+    display_workspace_->set_visualization_title("yz_processed", tr("YZ Processed"));
+  }
+  const auto folder = import_widget_->get_file_path();
+  if (import_widget_->is_focus_mode()) {
+    try {
+      const auto c = holotask::pipelines::inspect_holo_calibration(folder.toStdString());
+      const bool new_recording = folder != focus_loaded_path_;
+      render_widget_->focus_controls()->load_calibration(folder.toStdString(), new_recording);
+      focus_dims_ = QSize(c.width, c.height);
+      refresh_focus_geometry();
+      if (new_recording) {
+        const auto settings = render_widget_->focus_controls()->settings();
+        const bool temporal = settings.method == "holovibes_stft";
+        const int  depth    = temporal ? settings.window : settings.optics.planes;
+        view_widget_->focus_controls()->set_settings(
+            {.x             = temporal ? 0 : c.width / 2,
+             .y             = temporal ? 0 : c.height / 2,
+             .z             = temporal ? std::min(224, depth - 1) : depth / 2,
+             .component     = "real",
+             .minimum       = 0,
+             .maximum       = 1,
+             .band_width    = temporal ? 20 : 0,
+             .x_width       = temporal ? 20 : 0,
+             .y_width       = temporal ? 20 : 0,
+             .auto_contrast = true,
+             .fit_panel     = false});
+      }
+      focus_loaded_path_ = folder;
+    } catch (const std::exception &) {
+      // A temporarily invalid source must not discard the last recording's view settings.
+      render_widget_->focus_controls()->load_calibration(folder.toStdString(), false);
+      refresh_focus_geometry();
+    }
+    return;
+  }
+  if (!enabled || folder.isEmpty() || folder == mtd_loaded_path_)
+    return;
+  try {
+    const auto dataset = holotask::pipelines::load_mtd_dataset(folder.toStdString());
+    render_widget_->mtd_controls()->set_settings(
+        {.dimension = dataset.linear.dimension, .iterations = dataset.gps.iterations});
+    mtd_voxel_pitch_m_ =
+        dataset.linear.hologram_size * dataset.linear.pixel_pitch_object / dataset.linear.dimension;
+    view_widget_->mtd_controls()->set_extent(dataset.linear.dimension, mtd_voxel_pitch_m_);
+    render_widget_->mtd_controls()->set_dataset_summary(
+        tr("%1 holograms Â· Î»=%2 nm Â· nâ‚€=%3 Â· medium index=%4%5. Optical settings loaded from "
+           "the dataset.")
+            .arg(dataset.frame_count)
+            .arg(dataset.linear.wavelength * 1e9, 0, 'g', 6)
+            .arg(dataset.linear.background_index, 0, 'g', 6)
+            .arg(dataset.linear.medium_index, 0, 'g', 6)
+            .arg(dataset.medium_index_assumed ? tr(" (assumed equal to nâ‚€)") : QString{}));
+    mtd_loaded_path_ = folder;
+  } catch (const std::exception &error) {
+    render_widget_->mtd_controls()->set_dataset_summary(QString::fromUtf8(error.what()));
+  }
+}
+
+void MainWindow::refresh_mtd_displays() {
+  refresh_slice_guides();
+  const auto view = view_widget_->volume_controls()->settings();
+  display_workspace_->set_visualization_title("xy_processed",
+                                              tr("XY - X right, Y down (Z=%1)").arg(view.z));
+  display_workspace_->set_visualization_title("xz_processed",
+                                              tr("XZ - X right, Z down (Y=%1)").arg(view.y));
+  display_workspace_->set_visualization_title("yz_processed",
+                                              tr("YZ - Y right, Z down (X=%1)").arg(view.x));
+  if (import_widget_->is_focus_mode()) {
+    const auto settings = render_widget_->focus_controls()->settings();
+    if (settings.method == "holovibes_stft") {
+      display_workspace_->set_visualization_title(
+          "xy_processed", tr("XY - STFT bins %1 to %2")
+                              .arg(view.z)
+                              .arg(std::min(settings.window - 1, view.z + view.band_width)));
+      display_workspace_->set_visualization_title(
+          "xz_processed", tr("XZ / XP - X right, temporal bin down (Y=%1)").arg(view.y));
+      display_workspace_->set_visualization_title(
+          "yz_processed", tr("YZ / YP - temporal bin right, Y down (X=%1)").arg(view.x));
+    } else {
+      const auto  &optics = settings.optics;
+      const double z =
+          optics.z_min_m + (optics.z_max_m - optics.z_min_m) * view.z / (optics.planes - 1);
+      display_workspace_->set_visualization_title(
+          "xy_processed", tr("XY focus - propagation Z = %1 mm").arg(z * 1e3, 0, 'g', 8));
+    }
+  }
+  refresh_visualization_availability();
+  display_workspace_->set_pipeline_running(pipeline_running_);
+  refresh_command_bar();
+  if (pipeline_running_)
+    set_status_label(pipeline_status_label_, "Volume ready", "success");
+  fps_status_label_->setText("--");
+}
+
+void MainWindow::refresh_focus_geometry() {
+  const auto  settings = render_widget_->focus_controls()->settings();
+  const auto &s        = settings.optics;
+  const bool  temporal = settings.method == "holovibes_stft";
+  view_widget_->focus_controls()->set_focus_extent(
+      focus_dims_.width(), focus_dims_.height(), temporal ? settings.window : s.planes,
+      temporal ? settings.temporal_pitch_m : s.pixel_pitch_x_m,
+      temporal ? settings.temporal_pitch_m : s.pixel_pitch_y_m, s.z_min_m, s.z_max_m, temporal);
+}
+
+void MainWindow::move_volume_slices(int plane, double x, double y) {
+  if (!import_widget_->is_volume_mode())
+    return;
+  auto *controls = view_widget_->volume_controls();
+  auto  view     = controls->settings();
+  int   width, height, depth;
+  bool  temporal = false;
+  if (import_widget_->is_focus_mode()) {
+    const auto focus = render_widget_->focus_controls()->settings();
+    temporal         = focus.method == "holovibes_stft";
+    width            = focus_dims_.width();
+    height           = focus_dims_.height();
+    depth            = temporal ? focus.window : focus.optics.planes;
+  } else {
+    width = height = depth = render_widget_->mtd_controls()->settings().dimension;
+  }
+  if (width <= 0 || height <= 0 || depth <= 0)
+    return;
+  auto index = [](double value, int extent) {
+    return std::clamp(static_cast<int>(value * extent), 0, extent - 1);
+  };
+  if (plane == 0) {
+    view.x = index(x, width);
+    view.y = index(y, height);
+  } else {
+    // Cut views move only the XY plane; X/Y remain controlled by the main XY view.
+    view.z = index(plane == 2 && temporal ? x : y, depth);
+  }
+  controls->set_slice_positions(view.x, view.y, view.z);
+}
+void MainWindow::refresh_slice_guides() {
+  if (!import_widget_->is_volume_mode())
+    return;
+  const auto view = view_widget_->volume_controls()->settings();
+  int        width, height, depth;
+  bool       temporal = false;
+  if (import_widget_->is_focus_mode()) {
+    const auto focus = render_widget_->focus_controls()->settings();
+    temporal         = focus.method == "holovibes_stft";
+    width            = focus_dims_.width();
+    height           = focus_dims_.height();
+    depth            = temporal ? focus.window : focus.optics.planes;
+  } else {
+    width = height = depth = render_widget_->mtd_controls()->settings().dimension;
+  }
+  if (width <= 0 || height <= 0 || depth <= 0)
+    return;
+  auto band = [](int position, int span, int extent, bool vertical) {
+    const int    first = std::clamp(position, 0, extent - 1);
+    const double start = static_cast<double>(first) / extent;
+    const double size  = static_cast<double>(std::min(span + 1, extent - first)) / extent;
+    return vertical ? QRectF(start, 0, size, 1) : QRectF(0, start, 1, size);
+  };
+  const int xs = temporal ? view.x_width : 0;
+  const int ys = temporal ? view.y_width : 0;
+  const int zs = temporal ? view.band_width : 0;
+  xy_processed_widget_->set_slice_guides(
+      {band(view.x, xs, width, true), band(view.y, ys, height, false)});
+  xz_processed_widget_->set_slice_guides({band(view.z, zs, depth, false)});
+  yz_processed_widget_->set_slice_guides({band(view.z, zs, depth, temporal)});
 }
 
 } // namespace holovibes::ui

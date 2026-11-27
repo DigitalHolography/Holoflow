@@ -88,6 +88,19 @@ private:
   void on_update_pipeline_success();
   void on_update_pipeline_failure(const QString &error);
 
+  void                        refresh_mtd_mode();
+  bool                        pipeline_starting_ = false;
+  void                        refresh_mtd_displays();
+  bool                        mtd_ui_mode_        = false;
+  bool                        mtd_update_pending_ = false;
+  QString                     mtd_loaded_path_;
+  QString                     focus_loaded_path_;
+  QSize                       focus_dims_{512, 512};
+  void                        refresh_focus_geometry();
+  double                      mtd_voxel_pitch_m_ = 0;
+  void                        refresh_slice_guides();
+  void                        move_volume_slices(int plane, double x, double y);
+  QString                     validation_error_message_;
   void on_update_record(size_t id, size_t frame_recorded, size_t writing_speed,
                         size_t elapsed_time);
   void on_update_acquisition(size_t id, size_t frame_acquired);

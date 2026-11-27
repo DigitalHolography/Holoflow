@@ -34,6 +34,16 @@
       "type": "integer",
       "minimum": 1,
       "description": "Optional playback cap in frames per second. When omitted, the holofile is read as fast as possible."
+    },
+    "repeat": {
+      "type": "boolean",
+      "default": true,
+      "description": "Loop the selected range. False finishes after the last complete batch (offline reconstruction)."
+    },
+    "keep_cursor": {
+      "type": "boolean",
+      "default": true,
+      "description": "Keep the current frame when updating an existing source."
     }
   },
   "required": [

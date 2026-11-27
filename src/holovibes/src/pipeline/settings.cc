@@ -13,8 +13,10 @@
 // limitations under the License.
 
 #include "pipeline/settings.hh"
+#include <nlohmann/json.hpp>
 
 namespace holovibes::pipeline {
+
 const char *to_string(ImportSource src) {
   switch (src) {
   case ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO:
@@ -25,8 +27,53 @@ const char *to_string(ImportSource src) {
     return "AmetekS991EuresysCoaxlinkQSFP+";
   case ImportSource::HOLOFILE:
     return "Holofile";
-  default:
-    throw std::runtime_error("unknown import source");
+  case ImportSource::MTD_DATASET:
+    return "MTD Dataset";
+  case ImportSource::HOLO_FOCUS:
+    return "Hologram Focus";
   }
+  return "Unknown";
+}
+
+// -------------------------------------------------------------------------------------------------
+// MTD settings serialization
+// -------------------------------------------------------------------------------------------------
+
+void to_json(nlohmann::json &j, const MTDReconstructionSettings &s) {
+  j                 = {{"dimension", s.dimension}, {"iterations", s.iterations}};
+  j["medium_index"] = s.medium_index ? nlohmann::json(*s.medium_index) : nlohmann::json(nullptr);
+}
+void from_json(const nlohmann::json &j, MTDReconstructionSettings &s) {
+  s.dimension  = j.value("dimension", 512);
+  s.iterations = j.value("iterations", 10);
+  s.medium_index.reset();
+  if (j.contains("medium_index") && !j.at("medium_index").is_null())
+    s.medium_index = j.at("medium_index").get<double>();
+}
+void to_json(nlohmann::json &j, const MTDViewSettings &s) {
+  j = {{"x", s.x},
+       {"y", s.y},
+       {"z", s.z},
+       {"component", s.component},
+       {"minimum", s.minimum},
+       {"maximum", s.maximum},
+       {"band_width", s.band_width},
+       {"x_width", s.x_width},
+       {"y_width", s.y_width},
+       {"auto_contrast", s.auto_contrast},
+       {"fit_panel", s.fit_panel}};
+}
+void from_json(const nlohmann::json &j, MTDViewSettings &s) {
+  s.band_width    = j.value("band_width", 0);
+  s.x_width       = j.value("x_width", 0);
+  s.y_width       = j.value("y_width", 0);
+  s.auto_contrast = j.value("auto_contrast", false);
+  s.fit_panel     = j.value("fit_panel", false);
+  s.x             = j.value("x", 256);
+  s.y             = j.value("y", 256);
+  s.z             = j.value("z", 280);
+  s.component     = j.value("component", std::string("real"));
+  s.minimum       = j.value("minimum", 0.0);
+  s.maximum       = j.value("maximum", 0.06);
 }
 } // namespace holovibes::pipeline

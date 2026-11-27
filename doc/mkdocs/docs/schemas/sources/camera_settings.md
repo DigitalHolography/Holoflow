@@ -50,4 +50,3 @@ Without record settings:
 | + [cfg_path](#cfg_path ) | No      | string | No         | -          | Path to the JSON configuration file for the camera. The file must contain a top-level the short name of the camera ("AmetekS711CoaxlinkQSFP+" -> "s711") object with camera parameters (Width, Height, PixelFormat, BufferPartCount, ExposureTime, etc.). |
 | + [name](#name ) | No      | string | No         | -          | Name of the camera (ex: "AmetekS711CoaxlinkQSFP+")|
 | + [record_settings](#record_settings ) | No      | object | No         | -          | Record settings of the camera. It is nullable and optional. If specified it must contains the following fields: filepath (string), recording_count (int > 0), recording_queue_count (int > 0), pipeline_settings (object) |
-

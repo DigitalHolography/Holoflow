@@ -16,6 +16,7 @@
 
 #include <QCoreApplication>
 #include <QMetaObject>
+#include <QPointer>
 #include <QStandardPaths>
 #include <QThread>
 #include <QTimer>
@@ -23,6 +24,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -95,6 +97,7 @@
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
+#include "holotask/pipelines/mtd.hh"
 #include "holotask/asyncs/temporal_window.hh"
 #include "holotask/sinks/ffmpeg.hh"
 #include "holotask/sinks/holofile.hh"
@@ -103,6 +106,7 @@
 #include "holotask/sources/fresnel_qin.hh"
 #include "holotask/sources/fresnel_qout.hh"
 #include "holotask/sources/holofile.hh"
+#include "holotask/sources/pgm_sequence.hh"
 #include "holotask/syncs/angular_spectrum.hh"
 #include "holotask/syncs/causal_sliding_average.hh"
 #include "holotask/syncs/conversion.hh"
@@ -135,6 +139,7 @@
 #include "tasks/sinks/display_tensor.hh"
 #include "tasks/sinks/display_zernike_coefficients.hh"
 #include "ui/widgets/auto_focus_widget.hh"
+#include "ui/widgets/tensor_display_widget.hh"
 #include "ui/widgets/zernike_history_widget.hh"
 #include <QPointer>
 
@@ -222,6 +227,10 @@ Manager::Manager(
       history_dispatchers_(std::make_shared<ui::SignalHistoryDispatcherProvider>()) {
 
   register_components();
+  focus_playback_timer_ = new QTimer(this);
+  focus_playback_timer_->setSingleShot(true);
+  focus_playback_timer_->setTimerType(Qt::PreciseTimer);
+  connect(focus_playback_timer_, &QTimer::timeout, this, &Manager::advance_focus_playback);
 
   // Setup UI metric polling (1 FPS)
   metrics_timer_ = new QTimer(this);
@@ -269,6 +278,8 @@ void Manager::register_components() {
   reg_sync<sinks::NpyfileFactory>(registry_, "NpyfileWriter");
   reg_sync<sinks::FfmpegFactory>(registry_, "FfmpegWriter");
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
+  reg_sync<sources::PgmSequenceFactory>(registry_, "PgmSequence");
+  holotask::pipelines::register_mtd_tasks(registry_);
   reg_sync<sources::CameraFactory>(registry_, "Camera");
   reg_sync<sources::FresnelQinFactory>(registry_, "FresnelQin");
   reg_sync<sources::FresnelQoutFactory>(registry_, "FresnelQout");
@@ -357,6 +368,8 @@ void Manager::register_components() {
   reg_sync<ExpFactory>(registry_, "Exp");
   reg_sync<WhereFactory>(registry_, "Where");
   reg_sync<ReshapeFactory>(registry_, "Reshape");
+  holotask::pipelines::register_focus_stack_tasks(registry_);
+  // clang-format on
   reg_sync<SquareFactory>(registry_, "Square");
 }
 
@@ -447,7 +460,7 @@ void Manager::start_pipeline() {
     lock.lock();
   }
 
-  if (scheduler_ && scheduler_->is_running()) {
+  if (volume_active_ || (scheduler_ && scheduler_->is_running())) {
     const QString msg = "Pipeline is already running";
     logger()->error("[Manager::start_pipeline] {}", msg.toStdString());
     operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
@@ -456,13 +469,24 @@ void Manager::start_pipeline() {
   }
 
   try {
-    configure_zernike_history(true);
-    build_and_run();
+    if (is_volume_mode())
+      start_volume();
+    else {
+      mtd_session_.reset();
+      focus_session_.reset();
+      configure_zernike_history(true);
+      build_and_run();
+    }
     logger()->info("[Manager::start_pipeline] Pipeline started successfully");
     operation.set_outcome(holoflow::runtime::tracing::Outcome::Success);
     emit start_pipeline_success();
+    if (volume_active_)
+      present_volume();
   } catch (const std::exception &e) {
-    stop_zernike_history(true);
+    volume_active_ = false;
+    focus_playback_timer_->stop();
+    if (!is_volume_mode())
+      stop_zernike_history();
     const QString msg = QString("Failed to start pipeline: %1").arg(e.what());
     logger()->error("[Manager::start_pipeline] {}", msg.toStdString());
     operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
@@ -477,6 +501,14 @@ void Manager::stop_pipeline() {
   {
     ScopedTrace scope("Acquire Manager Lock");
     lock.lock();
+  }
+
+  focus_playback_timer_->stop();
+  if (volume_active_) {
+    volume_active_ = false;
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Success);
+    emit stop_pipeline_success();
+    return;
   }
 
   if (!scheduler_ || !scheduler_->is_running()) {
@@ -585,11 +617,24 @@ void Manager::resume_pipeline() {
     lock.lock();
   }
 
-  if (scheduler_ && scheduler_->is_running()) {
+  if (volume_active_ || (scheduler_ && scheduler_->is_running())) {
     const QString msg = "Pipeline is already running";
     logger()->error("[Manager::resume_pipeline] {}", msg.toStdString());
     operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
     emit resume_pipeline_failure(msg);
+    return;
+  }
+  if (is_volume_mode() && volume_session()) {
+    try {
+      start_volume();
+      operation.set_outcome(holoflow::runtime::tracing::Outcome::Success);
+      emit resume_pipeline_success();
+      if (volume_active_)
+        present_volume();
+    } catch (const std::exception &e) {
+      operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
+      emit resume_pipeline_failure(QString("Failed to resume volume: %1").arg(e.what()));
+    }
     return;
   }
   if (!compiler_output_ || settings_dirty_) {
@@ -606,6 +651,8 @@ void Manager::resume_pipeline() {
     logger()->info("[Manager::resume_pipeline] Pipeline resumed successfully");
     operation.set_outcome(holoflow::runtime::tracing::Outcome::Success);
     emit resume_pipeline_success();
+    if (volume_active_)
+      present_volume();
   } catch (const std::exception &e) {
     stop_zernike_history();
     const QString msg = QString("Failed to resume pipeline: %1").arg(e.what());
@@ -644,13 +691,43 @@ void Manager::update_pipeline(const Settings &settings) {
     settings_dirty_ = true;
   }
 
+  if (volume_active_ || (is_volume_mode() && volume_session())) {
+    const bool was_active = volume_active_;
+    try {
+      if (is_volume_mode()) {
+        start_volume();
+      } else {
+        volume_active_ = false;
+        mtd_session_.reset();
+        focus_session_.reset();
+        configure_zernike_history(true);
+        build_and_run();
+      }
+      if (!was_active && is_volume_mode()) {
+        volume_active_ = false;
+        focus_playback_timer_->stop();
+      }
+      operation.set_outcome(holoflow::runtime::tracing::Outcome::Success);
+      emit update_pipeline_success();
+      if (is_volume_mode() && volume_session())
+        present_volume();
+    } catch (const std::exception &e) {
+      operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
+      emit update_pipeline_failure(QString("Failed to update volume: %1").arg(e.what()));
+    }
+    return;
+  }
+
   if (!scheduler_ || !scheduler_->is_running()) {
     try {
-      configure_zernike_history(false);
+      if (!is_volume_mode())
+        configure_zernike_history(false);
       logger()->debug(
           "[Manager::update_pipeline] Pipeline is not running, updated parameters only.");
       operation.set_outcome(holoflow::runtime::tracing::Outcome::Success);
       emit update_pipeline_success();
+      if (volume_active_)
+        present_volume();
     } catch (const std::exception &e) {
       const QString msg = QString("Failed to update pipeline: %1").arg(e.what());
       logger()->error("[Manager::update_pipeline] {}", msg.toStdString());
@@ -672,12 +749,18 @@ void Manager::update_pipeline(const Settings &settings) {
     }
     raw_recording_active_ = false;
 
-    configure_zernike_history(true);
-    build_and_run();
+    if (is_volume_mode())
+      start_volume();
+    else {
+      configure_zernike_history(true);
+      build_and_run();
+    }
 
     logger()->info("[Manager::update_pipeline] Pipeline updated successfully");
     operation.set_outcome(holoflow::runtime::tracing::Outcome::Success);
     emit update_pipeline_success();
+    if (volume_active_)
+      present_volume();
   } catch (const std::exception &e) {
     stop_zernike_history(true);
     settings_dirty_ = true;
@@ -789,6 +872,12 @@ void Manager::update_graph_compiled_dump_preferences(const GraphCompiledDumpPref
 }
 
 void Manager::request_compiled_graph_visualization() {
+  if (is_volume_mode() && volume_session()) {
+    emit graph_visualization_ready(QString::fromStdString(
+        (s_.import_source == ImportSource::HOLO_FOCUS ? focus_session_->graph_dot()
+                                                      : mtd_session_->graph_dot())));
+    return;
+  }
   if (!compiler_output_) {
     emit graph_visualization_failed(
         "No compiled pipeline graph is available. Start the pipeline first.");
@@ -1242,6 +1331,162 @@ void Manager::guess_source_dims() {
   }
 
   HOLOVIBES_UNIMPLEMENTED();
+}
+
+// -------------------------------------------------------------------------------------------------
+// Retained MTD volume and display-only navigation
+// -------------------------------------------------------------------------------------------------
+
+void Manager::start_volume() {
+  stop_metrics_updates();
+  stop_event_polling();
+  if (scheduler_ && scheduler_->is_running()) {
+    scheduler_->request_stop();
+    scheduler_->wait();
+  }
+  scheduler_.reset();
+  compiler_output_.reset();
+  raw_recording_active_ = false;
+  if (s_.import_source == ImportSource::HOLO_FOCUS) {
+    mtd_session_.reset();
+    if (!focus_session_)
+      focus_session_ = std::make_unique<FocusSession>();
+    focus_session_->reconstruct(s_.load_path, s_.focus_reconstruction);
+    emit focus_volume_ready(focus_session_->width(), focus_session_->height(),
+                            focus_session_->depth());
+  } else {
+    focus_playback_timer_->stop();
+    focus_session_.reset();
+    if (!mtd_session_)
+      mtd_session_ = std::make_unique<MTDSession>();
+    mtd_session_->reconstruct(s_.load_path, s_.mtd_reconstruction);
+    emit mtd_volume_ready(mtd_session_->dimension(), mtd_session_->voxel_pitch_m());
+  }
+  volume_active_  = true;
+  settings_dirty_ = false;
+  publish_focus_position();
+  schedule_focus_playback();
+}
+
+// Called after the lifecycle-success signal: its GUI handler resets the workspace.
+bool Manager::is_volume_mode() const {
+  return s_.import_source == ImportSource::MTD_DATASET ||
+         s_.import_source == ImportSource::HOLO_FOCUS;
+}
+
+VolumeSession *Manager::volume_session() const {
+  return s_.import_source == ImportSource::HOLO_FOCUS
+             ? static_cast<VolumeSession *>(focus_session_.get())
+             : static_cast<VolumeSession *>(mtd_session_.get());
+}
+
+void Manager::present_volume() {
+  auto *session = volume_session();
+  if (!session)
+    throw std::logic_error("No volume is available");
+  const bool  focus    = s_.import_source == ImportSource::HOLO_FOCUS;
+  const auto &view     = focus ? s_.focus_view : s_.mtd_view;
+  const bool  temporal = focus && s_.focus_reconstruction.method == "holovibes_stft";
+  const auto  present = [session, &view, focus, temporal](ui::TensorDisplayWidget *widget, int axis,
+                                                          int index) {
+    const int limit =
+        axis == 0 ? session->depth() : (axis == 1 ? session->height() : session->width());
+    index = std::clamp(index, 0, limit - 1);
+    const int extent =
+        temporal ? (axis == 0 ? view.band_width : (axis == 1 ? view.y_width : view.x_width)) : 0;
+    const int  count     = std::min(std::max(0, extent), limit - index - 1) + 1;
+    const bool transpose = temporal && axis == 2;
+    auto frame  = session->slice(axis, index, focus ? "real" : view.component, count, transpose);
+    int  width  = axis == 2 ? session->height() : session->width();
+    int  height = axis == 0 ? session->height() : session->depth();
+    if (transpose)
+      std::swap(width, height);
+    float minimum = static_cast<float>(view.minimum), maximum = static_cast<float>(view.maximum);
+    if (focus && view.auto_contrast) {
+      std::vector<float> pixels(static_cast<size_t>(width) * height);
+      std::memcpy(pixels.data(), frame.constData(), frame.size());
+      std::vector<float> sample;
+      const size_t       step = std::max(size_t{1}, pixels.size() / 65536);
+      sample.reserve(pixels.size() / step + 1);
+      for (size_t i = 0; i < pixels.size(); i += step) {
+        const size_t bin =
+            transpose ? i % static_cast<size_t>(width) : i / static_cast<size_t>(width);
+        if (std::isfinite(pixels[i]) && !(temporal && axis != 0 && bin < 2))
+          sample.push_back(pixels[i]);
+      }
+      if (!sample.empty()) {
+        const size_t lower = (sample.size() - 1) * 5 / 1000,
+                     upper = (sample.size() - 1) * 995 / 1000;
+        std::nth_element(sample.begin(), sample.begin() + lower, sample.end());
+        minimum = sample[lower];
+        std::nth_element(sample.begin(), sample.begin() + upper, sample.end());
+        maximum = sample[upper];
+        if (maximum <= minimum)
+          maximum = minimum + std::max(1e-6f, std::abs(minimum) * 1e-6f);
+      }
+    }
+    QPointer<ui::TensorDisplayWidget> safe_widget(widget);
+    const bool                        fit = focus && view.fit_panel;
+    if (!QMetaObject::invokeMethod(
+            widget,
+            [safe_widget, frame = std::move(frame), width, height, minimum, maximum, fit]() {
+              if (!safe_widget)
+                return;
+              safe_widget->set_fit_to_panel(fit);
+              safe_widget->set_fixed_aspect(fit ? std::nullopt
+                                                : std::optional(QSize(width, height)));
+              safe_widget->set_value_range(minimum, maximum);
+              safe_widget->presentTensor(frame, width, height, holoflow::core::DType::F32);
+            },
+            Qt::QueuedConnection))
+      throw std::runtime_error("Could not dispatch a volume slice to its display");
+  };
+  present(xy_processed_widget_, 0, view.z);
+  present(xz_processed_widget_, 1, view.y);
+  present(yz_processed_widget_, 2, view.x);
+}
+
+void Manager::schedule_focus_playback(int delay_ms) {
+  if (!volume_active_ || s_.import_source != ImportSource::HOLO_FOCUS || !focus_session_ ||
+      s_.focus_reconstruction.method != "holovibes_stft" || !s_.focus_reconstruction.playback) {
+    focus_playback_timer_->stop();
+    return;
+  }
+  // View-only updates must not postpone the next video window.
+  if (!focus_playback_timer_->isActive())
+    focus_playback_timer_->start(
+        delay_ms >= 0 ? delay_ms : std::max(1, 1000 / s_.focus_reconstruction.playback_fps));
+}
+
+void Manager::publish_focus_position() {
+  if (s_.import_source != ImportSource::HOLO_FOCUS || !focus_session_)
+    return;
+  const int first = focus_session_->current_frame();
+  const int count =
+      s_.focus_reconstruction.method == "holovibes_stft" ? s_.focus_reconstruction.window : 1;
+  emit focus_playback_position(first, first + count - 1, focus_session_->frame_count());
+}
+
+void Manager::advance_focus_playback() {
+  std::lock_guard lock(mtx_);
+  if (!volume_active_ || s_.import_source != ImportSource::HOLO_FOCUS || !focus_session_ ||
+      s_.focus_reconstruction.method != "holovibes_stft" || !s_.focus_reconstruction.playback)
+    return;
+  const auto started = std::chrono::steady_clock::now();
+  try {
+    focus_session_->advance();
+    publish_focus_position();
+    present_volume();
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - started)
+                             .count();
+    const int  period  = std::max(1, 1000 / s_.focus_reconstruction.playback_fps);
+    schedule_focus_playback(static_cast<int>(std::max<int64_t>(1, period - elapsed)));
+  } catch (const std::exception &error) {
+    volume_active_ = false;
+    focus_playback_timer_->stop();
+    emit update_pipeline_failure(QString("Playback failed: %1").arg(error.what()));
+  }
 }
 
 } // namespace holovibes::pipeline

@@ -328,6 +328,15 @@ nlohmann::json settings_to_old_json(const Settings &settings) {
   write_image_rendering(j, settings);
   write_view(j, settings);
   write_info(j, settings);
+  j["compute_settings"]["mtd"] = {{"enabled", settings.import_source == ImportSource::MTD_DATASET},
+                                  {"directory", settings.load_path.string()},
+                                  {"reconstruction", settings.mtd_reconstruction},
+                                  {"view", settings.mtd_view}};
+  j["compute_settings"]["focus_explorer"] = {
+      {"enabled", settings.import_source == ImportSource::HOLO_FOCUS},
+      {"path", settings.load_path.string()},
+      {"reconstruction", settings.focus_reconstruction},
+      {"view", settings.focus_view}};
 
   return j;
 }
@@ -345,6 +354,36 @@ Settings old_json_to_settings(const nlohmann::json &j, const Settings &default_s
   read_image_rendering(settings, rendering);
   read_view(settings, view);
   read_info(settings, info);
+  const auto &mtd = child_or_empty(compute, "mtd");
+  if (mtd.value("enabled", false)) {
+    settings.import_source = ImportSource::MTD_DATASET;
+    settings.load_path     = mtd.value("directory", settings.load_path.string());
+  }
+  if (mtd.contains("reconstruction"))
+    mtd.at("reconstruction").get_to(settings.mtd_reconstruction);
+  if (mtd.contains("view"))
+    mtd.at("view").get_to(settings.mtd_view);
+  const auto &focus = child_or_empty(compute, "focus_explorer");
+  if (focus.value("enabled", false)) {
+    settings.import_source = ImportSource::HOLO_FOCUS;
+    settings.load_path     = focus.value("path", settings.load_path.string());
+  }
+  if (focus.contains("reconstruction"))
+    focus.at("reconstruction").get_to(settings.focus_reconstruction);
+  if (focus.contains("view"))
+    focus.at("view").get_to(settings.focus_view);
+  if (focus.contains("reconstruction") && !focus.at("reconstruction").contains("method"))
+    settings.focus_view = {.x             = 0,
+                           .y             = 0,
+                           .z             = 224,
+                           .component     = "real",
+                           .minimum       = 0,
+                           .maximum       = 1,
+                           .band_width    = 20,
+                           .x_width       = 20,
+                           .y_width       = 20,
+                           .auto_contrast = true,
+                           .fit_panel     = false};
 
   return settings;
 }

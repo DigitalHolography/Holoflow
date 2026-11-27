@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NpyVolumeSettings",
+  "type": "object",
+  "required": [
+    "path"
+  ],
+  "properties": {
+    "path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "metadata": {
+      "type": "object",
+      "default": {}
+    },
+    "overwrite": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "additionalProperties": false
+}

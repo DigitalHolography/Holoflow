@@ -14,6 +14,9 @@
 
 #pragma once
 
+#include "ui/widgets/focus_processing_widget.hh"
+#include "ui/widgets/mtd_processing_widget.hh"
+
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
@@ -32,6 +35,11 @@ class ImageRenderingWidget : public QGroupBox {
 
 public:
   explicit ImageRenderingWidget(QWidget *parent = nullptr);
+
+  void                   set_mtd_mode(bool enabled);
+  void                   set_focus_mode(bool enabled);
+  FocusProcessingWidget *focus_controls() const { return focus_controls_; }
+  MTDProcessingWidget   *mtd_controls() const { return mtd_controls_; }
 
   // Getters
   QString get_image_mode() const;
@@ -126,6 +134,10 @@ signals:
   void spatial_contrast_display_range_changed(float minimum, float maximum);
 
 private:
+  QWidget               *legacy_page_    = nullptr;
+  MTDProcessingWidget   *mtd_controls_   = nullptr;
+  FocusProcessingWidget *focus_controls_ = nullptr;
+
   void        setup_ui();
   void        connect_signals();
   QStringList load_available_kernels();

@@ -21,6 +21,9 @@ set(SOURCES
     flatfield_test.cu
     filter2d_test.cu
     fresnel_diffraction_test.cu
+    focus_volume_test.cc
+    pgm_sequence_test.cc
+    mtd_test.cc
     headless_nodes_test.cu
     holofile_sink_test.cc
     production_pipeline_test.cu
@@ -37,6 +40,7 @@ set(SOURCES
     zernike_phase_test.cu
     ../holonp/support/tensor_test_buffer.cc
     ../holonp/support/sync_task_runner.cc
+    ../holonp/support/python_oracle.cc
 )
 
 add_executable(${TARGET} ${SOURCES})
@@ -53,6 +57,11 @@ target_link_libraries(${TARGET}
     GTest::gtest_main
 )
 
+target_compile_definitions(${TARGET} PRIVATE
+    "HOLOTASK_MTD_ORACLE=\"${CMAKE_CURRENT_SOURCE_DIR}/python/mtd_oracle.py\""
+    "HOLOFLOW_TEST_PYTHON_EXECUTABLE=\"${Python3_EXECUTABLE}\""
+    "HOLONP_ORACLE_CACHE_DIR=\"${CMAKE_CURRENT_BINARY_DIR}/oracle_cache\""
+)
 if(TARGET holoflow_ffmpeg)
     target_link_libraries(${TARGET} PRIVATE holoflow_ffmpeg)
 endif()

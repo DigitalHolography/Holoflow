@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MTDLinear3DReconstructionSettings",
+  "type": "object",
+  "properties": {
+    "dimension": {
+      "type": "integer",
+      "default": 512,
+      "minimum": 2,
+      "maximum": 1024,
+      "multipleOf": 2
+    },
+    "hologram_size": {
+      "type": "integer",
+      "default": 1024,
+      "minimum": 1
+    },
+    "wavelength": {
+      "type": "number",
+      "default": 6.33e-07,
+      "minimum": 1e-30
+    },
+    "pixel_pitch_object": {
+      "type": "number",
+      "default": 5.5e-08,
+      "minimum": 1e-30
+    },
+    "background_index": {
+      "type": "number",
+      "default": 1.49,
+      "minimum": 1e-30
+    },
+    "medium_index": {
+      "type": "number",
+      "default": 1.49,
+      "minimum": 1e-30
+    },
+    "tukey_alpha": {
+      "type": "number",
+      "default": 0.1,
+      "minimum": 0,
+      "maximum": 1
+    }
+  },
+  "additionalProperties": false
+}

@@ -66,10 +66,7 @@ void from_json(const nlohmann::json &j, AngularSpectrumSettings::Padding &p) {
 
 void to_json(nlohmann::json &j, const AngularSpectrumSettings &as) {
   j = {
-      {"lambda", as.lambda},
-      {"dx", as.dx},
-      {"dy", as.dy},
-      {"z", as.z},
+      {"lambda", as.lambda}, {"dx", as.dx}, {"dy", as.dy}, {"z", as.z}, {"normalize", as.normalize},
   };
   if (as.filter.has_value()) {
     j["filter"] = as.filter.value();
@@ -80,6 +77,7 @@ void to_json(nlohmann::json &j, const AngularSpectrumSettings &as) {
 }
 
 void from_json(const nlohmann::json &j, AngularSpectrumSettings &as) {
+  as.normalize = j.value("normalize", false);
   j.at("lambda").get_to(as.lambda);
   j.at("dx").get_to(as.dx);
   j.at("dy").get_to(as.dy);
@@ -259,7 +257,7 @@ __device__ cuFloatComplex apply_transfer_function_callback(
 // -------------------------------------------------------------------------------------------------
 
 __global__ void spectral_lens_kernel(cuFloatComplex *lens, int width, int height, float lambda,
-                                     float z, float pixel_size) {
+                                     float z, float pixel_size, float normalization) {
   int col = blockIdx.x * blockDim.x + threadIdx.x;
   int row = blockIdx.y * blockDim.y + threadIdx.y;
   if (col >= width || row >= height)
@@ -273,8 +271,9 @@ __global__ void spectral_lens_kernel(cuFloatComplex *lens, int width, int height
   float tmp = 1.0f - (lambda * lambda) * (u * u + v * v);
   tmp       = fmaxf(tmp, 0.0f);
 
-  float phase             = 2.0f * CUDART_PI_F * z / lambda * sqrtf(tmp);
-  lens[row * width + col] = make_cuComplex(cosf(phase), sinf(phase));
+  float phase = 2.0f * CUDART_PI_F * z / lambda * sqrtf(tmp);
+  lens[row * width + col] =
+      make_cuComplex(cosf(phase) * normalization, sinf(phase) * normalization);
 }
 
 __global__ void multiply_filter_2d_kernel(cuFloatComplex *transfer_function, const uint32_t width,
@@ -363,25 +362,27 @@ __global__ void swap_corners_kernel(cuFloatComplex *in, cuFloatComplex *out, int
 }
 
 DevPtr<cuFloatComplex> make_transfer_function(int width, int height,
-                                              const AngularSpectrumSettings &settings) {
+                                              const AngularSpectrumSettings &settings,
+                                              cudaStream_t                   stream) {
   auto d_transfer_function =
-      curaii::make_unique_device_ptr<cuFloatComplex>(static_cast<size_t>(width) * height);
+      curaii::make_unique_device_ptr<cuFloatComplex>(static_cast<size_t>(width) * height, stream);
 
   dim3 block(16, 16);
   dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
-  spectral_lens_kernel<<<grid, block>>>(d_transfer_function.get(), width, height, settings.lambda,
-                                        settings.z, settings.dx);
+  spectral_lens_kernel<<<grid, block, 0, stream>>>(
+      d_transfer_function.get(), width, height, settings.lambda, settings.z, settings.dx,
+      settings.normalize ? 1.0f / (width * height) : 1.0f);
 
   if (settings.filter.has_value()) {
     const auto &f = settings.filter.value();
-    multiply_filter_2d_kernel<<<grid, block>>>(
+    multiply_filter_2d_kernel<<<grid, block, 0, stream>>>(
         d_transfer_function.get(), static_cast<uint32_t>(width), static_cast<uint32_t>(height),
         static_cast<uint32_t>(f.r_inner), static_cast<uint32_t>(f.r_outer),
         static_cast<uint32_t>(f.s_inner), static_cast<uint32_t>(f.s_outer));
   }
 
-  swap_corners_kernel<<<grid, block>>>(d_transfer_function.get(), d_transfer_function.get(), width,
-                                       height, 1);
+  swap_corners_kernel<<<grid, block, 0, stream>>>(d_transfer_function.get(),
+                                                  d_transfer_function.get(), width, height, 1);
   CUDA_CHECK(cudaGetLastError());
   return d_transfer_function;
 }
@@ -518,7 +519,7 @@ AngularSpectrumFactory::create(std::span<const holoflow::core::TDesc> input_desc
   auto       load_lto =
       needs_input_callback ? load_input_lto(is_real, W, H, OW, OH) : std::vector<char>{};
   auto transfer_function_lto = apply_transfer_function_lto(OW, OH);
-  auto d_transfer_function   = make_transfer_function(OW, OH, settings);
+  auto d_transfer_function   = make_transfer_function(OW, OH, settings, ctx.stream);
 
   ApplyTransferFunctionCallerInfo info{
       .transfer_function = d_transfer_function.get(),

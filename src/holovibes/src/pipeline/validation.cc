@@ -17,10 +17,13 @@
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
-#include <cstdio>
 #include <filesystem>
 #include <format>
 #include <system_error>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 
 namespace holovibes::pipeline {
 
@@ -89,7 +92,6 @@ std::optional<std::string> validate_recording_path(const std::filesystem::path &
 
   std::error_code       ec;
   std::filesystem::path directory = record_path.parent_path();
-  const std::string     path_str  = record_path.string();
 
   if (directory.empty()) {
     directory = std::filesystem::current_path(ec);
@@ -120,26 +122,88 @@ std::optional<std::string> validate_recording_path(const std::filesystem::path &
     return std::string{"Recording path must include a file name."};
   }
 
-  FILE *fp = nullptr;
-  if (fopen_s(&fp, path_str.c_str(), "wb") != 0 || !fp) {
-    std::error_code open_ec(errno, std::generic_category());
-    return std::format("Cannot write recording file \"{}\": {}.", record_path.string(),
-                       open_ec.message());
+  // Probe the parent directory with an exclusive sibling file. Opening record_path
+  // itself with "wb" would truncate an existing recording during validation.
+  std::filesystem::path probe;
+  HANDLE                handle = INVALID_HANDLE_VALUE;
+  for (unsigned int attempt = 0; attempt < 16; ++attempt) {
+    probe =
+        directory / std::format(L".holovibes-write-probe-{}-{}", GetCurrentProcessId(), attempt);
+    handle = CreateFileW(probe.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                         FILE_ATTRIBUTE_TEMPORARY, nullptr);
+    if (handle != INVALID_HANDLE_VALUE || GetLastError() != ERROR_FILE_EXISTS)
+      break;
   }
-
-  std::fclose(fp);
-
-  if (std::remove(path_str.c_str()) != 0) {
-    std::error_code remove_ec(errno, std::generic_category());
-    return std::format("Recording file probe succeeded, but cleanup failed for \"{}\": {}.",
-                       record_path.string(), remove_ec.message());
+  if (handle == INVALID_HANDLE_VALUE) {
+    return std::format("Cannot write recording directory \"{}\" (Windows error {}).",
+                       directory.string(), GetLastError());
   }
+  CloseHandle(handle);
+  std::filesystem::remove(probe, ec);
+  if (ec)
+    return std::format("Recording directory probe cleanup failed for \"{}\": {}.", probe.string(),
+                       ec.message());
 
   return std::nullopt;
 }
 
 ValidationResult validate_settings(const Settings &settings, const ValidationContext &context) {
   ValidationResult result;
+
+  if (settings.import_source == ImportSource::HOLO_FOCUS) {
+    const auto &r = settings.focus_reconstruction;
+    const auto &v = settings.focus_view;
+    if (!context.load_path_exists || !context.source_width || !context.source_height ||
+        !context.source_frame_count) {
+      add_issue(result, ValidationSeverity::Error, "focus_input_invalid",
+                "Select a valid, complete little-endian U8/U16 .holo recording.",
+                {SettingsField::LoadPath});
+      return result;
+    }
+    try {
+      holotask::pipelines::validate_holo_focus_settings(
+          r, *context.source_width, *context.source_height, *context.source_frame_count);
+    } catch (const std::exception &e) {
+      add_issue(result, ValidationSeverity::Error, "focus_reconstruction_invalid", e.what(),
+                {SettingsField::FocusReconstruction});
+    }
+    if (v.x < 0 || v.x >= *context.source_width || v.y < 0 || v.y >= *context.source_height ||
+        v.z < 0 || v.z >= (r.method == "holovibes_stft" ? r.window : r.optics.planes) ||
+        v.band_width < 0 || v.x_width < 0 || v.y_width < 0 ||
+        v.band_width >= (r.method == "holovibes_stft" ? r.window : r.optics.planes) ||
+        v.x_width >= *context.source_width || v.y_width >= *context.source_height ||
+        v.component != "real" || !std::isfinite(v.minimum) || !std::isfinite(v.maximum) ||
+        v.minimum >= v.maximum)
+      add_issue(result, ValidationSeverity::Error, "focus_view_invalid",
+                "Slice positions must be inside the stack; display minimum must be below maximum.",
+                {SettingsField::FocusView});
+    return result;
+  }
+
+  if (settings.import_source == ImportSource::MTD_DATASET) {
+    const auto &r = settings.mtd_reconstruction;
+    const auto &v = settings.mtd_view;
+    if (!context.load_path_exists || context.mtd_error)
+      add_issue(result, ValidationSeverity::Error, "mtd_input_invalid",
+                context.mtd_error.value_or("Select a valid MTD ACQUIS folder."),
+                {SettingsField::LoadPath});
+    if (r.dimension < 2 || r.dimension > 1024 || r.dimension % 2 != 0 || r.iterations < 1 ||
+        r.iterations > 1000 ||
+        (r.medium_index && (!std::isfinite(*r.medium_index) || *r.medium_index <= 0)))
+      add_issue(result, ValidationSeverity::Error, "mtd_reconstruction_invalid",
+                "MTD needs an even dimension from 2 to 1024, 1–1000 iterations, and a positive "
+                "finite medium index.",
+                {SettingsField::MTDReconstruction});
+    if (v.x < 0 || v.x >= r.dimension || v.y < 0 || v.y >= r.dimension || v.z < 0 ||
+        v.z >= r.dimension || !std::isfinite(v.minimum) || !std::isfinite(v.maximum) ||
+        v.minimum >= v.maximum ||
+        (v.component != "real" && v.component != "imaginary" && v.component != "magnitude"))
+      add_issue(
+          result, ValidationSeverity::Error, "mtd_view_invalid",
+          "Slice positions must be inside the volume and display minimum must be below maximum.",
+          {SettingsField::MTDView});
+    return result;
+  }
 
   if (settings.import_source == ImportSource::HOLOFILE) {
     if (settings.load_path.empty()) {
